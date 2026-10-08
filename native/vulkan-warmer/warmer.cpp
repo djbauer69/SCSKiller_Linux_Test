@@ -2444,7 +2444,7 @@ int Run(const std::string& recordingPath,
               << ", failed " << failed << "\\n";
 
     DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
-    return failed == 0 ? 0 : 1;
+    return (failed == 0 && graphicsFailed == 0) ? 0 : 1;
 }
 }
 
