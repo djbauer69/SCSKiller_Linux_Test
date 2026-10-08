@@ -219,6 +219,32 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* createInfo, const VkAllocationCallbacks* allocator, VkShaderModule* shaderModule)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end()) return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+    if (!dispatch.CreateShaderModule) return VK_ERROR_INITIALIZATION_FAILED;
+    if (createInfo && createInfo->pCode && createInfo->codeSize >= sizeof(uint32_t)) {
+        const auto hash = HashWords(createInfo->pCode, createInfo->codeSize / sizeof(uint32_t));
+        if (RecordingEnabled()) {
+            const char* path = std::getenv("SCSKILLER_VK_RECORD_FILE");
+            if (path && path[0]) {
+                if (std::FILE* file = std::fopen(path, "ab")) {
+                    const auto sequence = g_sequence.fetch_add(1);
+                    std::fprintf(file, "{\"event\":\"shader_module_create\",\"sequence\":%llu,\"code_words\":%zu,\"hash\":\"%016llx\"}\n", static_cast<unsigned long long>(sequence), createInfo->codeSize / sizeof(uint32_t), static_cast<unsigned long long>(hash));
+                    std::fclose(file);
+                }
+            }
+        }
+    }
+    return dispatch.CreateShaderModule(device, createInfo, allocator, shaderModule);
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateGraphicsPipelines(VkDevice device,
                           VkPipelineCache pipelineCache,
                           uint32_t createInfoCount,
@@ -286,6 +312,8 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines);
+    if (std::strcmp(name, "vkCreateShaderModule") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule);
     if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
 
