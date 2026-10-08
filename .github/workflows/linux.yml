@@ -51,6 +51,7 @@ jobs:
           SCSKILLER_VK_RECORD: "1"
           SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/capture.jsonl
           SCSKILLER_VK_DEBUG: "1"
+          VK_LOADER_DEBUG: "all"
         run: |
           timeout 60s build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/capture.jsonl
