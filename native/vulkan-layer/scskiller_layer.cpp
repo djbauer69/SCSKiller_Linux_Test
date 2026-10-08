@@ -244,7 +244,9 @@ const char* ShaderStageName(VkShaderStageFlagBits stage)
     }
 }
 
-void RecordSpecialization(FILE* file, const VkSpecializationInfo* info)
+std::string Base64(const uint8_t* data, size_t size);
+
+void RecordSpecialization(std::FILE* file, const VkSpecializationInfo* info)
 {
     if (!info)
     {
@@ -261,7 +263,7 @@ void RecordSpecialization(FILE* file, const VkSpecializationInfo* info)
         const auto& entry = info->pMapEntries[i];
         std::fprintf(file,
             "{\"constant_id\":%u,\"offset\":%zu,\"size\":%zu}",
-            entry.constantID, entry.offset, entry.size);
+            entry.constantID, static_cast<size_t>(entry.offset), static_cast<size_t>(entry.size));
     }
     std::fprintf(file, "],\"data_base64\":\"%s\"}",
         info->pData && info->dataSize
