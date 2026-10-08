@@ -266,6 +266,7 @@ struct VkContext
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
     VkPipelineCache cache = VK_NULL_HANDLE;
+    bool dynamicRenderingEnabled = false;
 };
 
 std::string Trim(std::string value)
@@ -762,7 +763,38 @@ bool ParseGraphicsPipelineState(
         if (ExtractObject(entry, "dynamic_rendering", dynamicRendering))
         {
             record.dynamicRendering = true;
-            record.replayCompatible = false;
+
+            if (!FindUnsigned(dynamicRendering, "view_mask", value))
+                return false;
+            record.viewMask = static_cast<uint32_t>(value);
+            if (!FindUnsigned(dynamicRendering, "depth_format", value))
+                return false;
+            record.depthFormat = static_cast<VkFormat>(value);
+            if (!FindUnsigned(dynamicRendering, "stencil_format", value))
+                return false;
+            record.stencilFormat = static_cast<VkFormat>(value);
+
+            std::string_view formats;
+            if (!ExtractArray(dynamicRendering, "color_formats", formats))
+                return false;
+            for (const auto formatText : SplitArray(formats))
+            {
+                const std::string formatEntry = Trim(std::string(formatText));
+                if (formatEntry.empty())
+                    continue;
+                if (!FindSigned(formatEntry, "value", signedValue))
+                {
+                    try
+                    {
+                        record.colorFormats.push_back(
+                            static_cast<VkFormat>(std::stol(formatEntry)));
+                    }
+                    catch (...)
+                    {
+                        return false;
+                    }
+                }
+            }
         }
 
         std::string_view stages;
@@ -1646,6 +1678,13 @@ int Run(const std::string& recordingPath,
               << ", ray-tracing pipelines skipped: " << recording.rayTracingPipelines << "\\n";
 
     VkContext context;
+
+    uint32_t loaderApiVersion = VK_API_VERSION_1_0;
+    if (vkEnumerateInstanceVersion(&loaderApiVersion) != VK_SUCCESS)
+        loaderApiVersion = VK_API_VERSION_1_0;
+    const uint32_t requestedApiVersion =
+        std::min(loaderApiVersion, VK_API_VERSION_1_3);
+
     VkApplicationInfo app{
         VK_STRUCTURE_TYPE_APPLICATION_INFO,
         nullptr,
@@ -1653,7 +1692,7 @@ int Run(const std::string& recordingPath,
         VK_MAKE_VERSION(1, 0, 0),
         "SCSKiller",
         VK_MAKE_VERSION(1, 0, 0),
-        VK_API_VERSION_1_0
+        requestedApiVersion
     };
     VkInstanceCreateInfo instanceInfo{
         VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -1709,6 +1748,36 @@ int Run(const std::string& recordingPath,
         return 1;
     }
 
+    VkPhysicalDeviceProperties physicalProperties{};
+    vkGetPhysicalDeviceProperties(context.physicalDevice, &physicalProperties);
+
+    VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeature{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+        nullptr,
+        VK_FALSE
+    };
+
+    if (requestedApiVersion >= VK_API_VERSION_1_3 &&
+        physicalProperties.apiVersion >= VK_API_VERSION_1_3)
+    {
+        VkPhysicalDeviceFeatures2 queriedFeatures{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            &dynamicRenderingFeature,
+            {}
+        };
+        auto getFeatures2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+            vkGetInstanceProcAddr(context.instance, "vkGetPhysicalDeviceFeatures2"));
+        if (getFeatures2)
+        {
+            getFeatures2(context.physicalDevice, &queriedFeatures);
+            context.dynamicRenderingEnabled =
+                dynamicRenderingFeature.dynamicRendering == VK_TRUE;
+        }
+    }
+
+    VkPhysicalDeviceFeatures availableFeatures{};
+    vkGetPhysicalDeviceFeatures(context.physicalDevice, &availableFeatures);
+
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo{
         VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -1722,12 +1791,9 @@ int Run(const std::string& recordingPath,
     // Enable every core Vulkan 1.0 feature exposed by the selected device.
     // This avoids artificially disabling capabilities that the captured
     // pipeline may have relied upon in the original application.
-    VkPhysicalDeviceFeatures availableFeatures{};
-    vkGetPhysicalDeviceFeatures(context.physicalDevice, &availableFeatures);
-
     VkDeviceCreateInfo deviceInfo{
         VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        nullptr,
+        context.dynamicRenderingEnabled ? &dynamicRenderingFeature : nullptr,
         0,
         1,
         &queueInfo,
@@ -2091,11 +2157,24 @@ int Run(const std::string& recordingPath,
         const auto layoutIt = pipelineLayouts.find(record.layoutHash);
         const auto renderPassIt = renderPasses.find(record.renderPassHash);
         if (layoutIt == pipelineLayouts.end() ||
-            renderPassIt == renderPasses.end() ||
             record.stages.empty())
         {
             ++graphicsSkipped;
-            std::cerr << "Skipping graphics pipeline: missing layout, render pass, or shader stage\n";
+            std::cerr << "Skipping graphics pipeline: missing layout or shader stage\n";
+            continue;
+        }
+
+        if (record.dynamicRendering && !context.dynamicRenderingEnabled)
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping dynamic-rendering graphics pipeline: Vulkan dynamicRendering feature is unavailable\n";
+            continue;
+        }
+
+        if (!record.dynamicRendering && renderPassIt == renderPasses.end())
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: render pass is unavailable\n";
             continue;
         }
 
@@ -2135,18 +2214,26 @@ int Run(const std::string& recordingPath,
             continue;
         }
 
-        const auto& renderPassRecordIt = recording.renderPasses.find(record.renderPassHash);
-        if (renderPassRecordIt == recording.renderPasses.end() ||
-            record.subpass >= renderPassRecordIt->second.subpasses.size())
+        const RenderPassSubpassRecord* subpassRecord = nullptr;
+        if (!record.dynamicRendering)
         {
-            ++graphicsSkipped;
-            std::cerr << "Skipping graphics pipeline: render-pass subpass is unavailable\n";
-            continue;
+            const auto renderPassRecordIt = recording.renderPasses.find(record.renderPassHash);
+            if (renderPassRecordIt == recording.renderPasses.end() ||
+                record.subpass >= renderPassRecordIt->second.subpasses.size())
+            {
+                ++graphicsSkipped;
+                std::cerr << "Skipping graphics pipeline: render-pass subpass is unavailable\n";
+                continue;
+            }
+            subpassRecord = &renderPassRecordIt->second.subpasses[record.subpass];
         }
 
-        const auto& subpassRecord = renderPassRecordIt->second.subpasses[record.subpass];
-        const bool needsDepthStencil = subpassRecord.hasDepthStencil;
-        const bool needsColorBlend = !subpassRecord.colorAttachments.empty();
+        const bool needsDepthStencil = record.dynamicRendering
+            ? record.depthFormat != VK_FORMAT_UNDEFINED || record.stencilFormat != VK_FORMAT_UNDEFINED
+            : subpassRecord->hasDepthStencil;
+        const bool needsColorBlend = record.dynamicRendering
+            ? !record.colorFormats.empty()
+            : !subpassRecord->colorAttachments.empty();
 
         if ((needsDepthStencil && !record.hasDepthStencil) ||
             (needsColorBlend && !record.hasColorBlend))
@@ -2378,9 +2465,19 @@ int Run(const std::string& recordingPath,
             record.patchControlPoints
         };
 
+        VkPipelineRenderingCreateInfo renderingInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            nullptr,
+            record.viewMask,
+            static_cast<uint32_t>(record.colorFormats.size()),
+            record.colorFormats.data(),
+            record.depthFormat,
+            record.stencilFormat
+        };
+
         VkGraphicsPipelineCreateInfo graphicsInfo{
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            nullptr,
+            record.dynamicRendering ? &renderingInfo : nullptr,
             record.flags,
             static_cast<uint32_t>(stages.size()),
             stages.data(),
@@ -2394,8 +2491,8 @@ int Run(const std::string& recordingPath,
             record.hasColorBlend ? &colorBlend : nullptr,
             record.dynamicStates.empty() ? nullptr : &dynamicState,
             layoutIt->second,
-            renderPassIt->second,
-            record.subpass,
+            record.dynamicRendering ? VK_NULL_HANDLE : renderPassIt->second,
+            record.dynamicRendering ? 0u : record.subpass,
             VK_NULL_HANDLE,
             -1
         };
