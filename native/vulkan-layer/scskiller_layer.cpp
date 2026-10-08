@@ -281,6 +281,218 @@ uint64_t HashSpecializationInfo(const VkSpecializationInfo* info)
     return hash;
 }
 
+uint64_t HashRenderPassCreateInfo(const VkRenderPassCreateInfo* info)
+{
+    if (!info)
+        return 0;
+
+    uint64_t hash = HashCombine(1469598103934665603ull, info->flags);
+    hash = HashCombine(hash, info->attachmentCount);
+
+    for (uint32_t i = 0; i < info->attachmentCount; ++i)
+    {
+        const auto& attachment = info->pAttachments[i];
+        hash = HashCombine(hash, attachment.flags);
+        hash = HashCombine(hash, attachment.format);
+        hash = HashCombine(hash, attachment.samples);
+        hash = HashCombine(hash, attachment.loadOp);
+        hash = HashCombine(hash, attachment.storeOp);
+        hash = HashCombine(hash, attachment.stencilLoadOp);
+        hash = HashCombine(hash, attachment.stencilStoreOp);
+        hash = HashCombine(hash, attachment.initialLayout);
+        hash = HashCombine(hash, attachment.finalLayout);
+    }
+
+    hash = HashCombine(hash, info->subpassCount);
+    for (uint32_t i = 0; i < info->subpassCount; ++i)
+    {
+        const auto& subpass = info->pSubpasses[i];
+        hash = HashCombine(hash, subpass.flags);
+        hash = HashCombine(hash, subpass.pipelineBindPoint);
+
+        hash = HashCombine(hash, subpass.inputAttachmentCount);
+        for (uint32_t ref = 0; ref < subpass.inputAttachmentCount; ++ref)
+        {
+            hash = HashCombine(hash, subpass.pInputAttachments[ref].attachment);
+            hash = HashCombine(hash, subpass.pInputAttachments[ref].layout);
+        }
+
+        hash = HashCombine(hash, subpass.colorAttachmentCount);
+        for (uint32_t ref = 0; ref < subpass.colorAttachmentCount; ++ref)
+        {
+            hash = HashCombine(hash, subpass.pColorAttachments[ref].attachment);
+            hash = HashCombine(hash, subpass.pColorAttachments[ref].layout);
+        }
+
+        hash = HashCombine(hash, subpass.pResolveAttachments ? subpass.colorAttachmentCount : 0);
+        if (subpass.pResolveAttachments)
+        {
+            for (uint32_t ref = 0; ref < subpass.colorAttachmentCount; ++ref)
+            {
+                hash = HashCombine(hash, subpass.pResolveAttachments[ref].attachment);
+                hash = HashCombine(hash, subpass.pResolveAttachments[ref].layout);
+            }
+        }
+
+        hash = HashCombine(hash, subpass.pDepthStencilAttachment ? 1u : 0u);
+        if (subpass.pDepthStencilAttachment)
+        {
+            hash = HashCombine(hash, subpass.pDepthStencilAttachment->attachment);
+            hash = HashCombine(hash, subpass.pDepthStencilAttachment->layout);
+        }
+
+        hash = HashCombine(hash, subpass.preserveAttachmentCount);
+        for (uint32_t ref = 0; ref < subpass.preserveAttachmentCount; ++ref)
+            hash = HashCombine(hash, subpass.pPreserveAttachments[ref]);
+    }
+
+    hash = HashCombine(hash, info->dependencyCount);
+    for (uint32_t i = 0; i < info->dependencyCount; ++i)
+    {
+        const auto& dependency = info->pDependencies[i];
+        hash = HashCombine(hash, dependency.srcSubpass);
+        hash = HashCombine(hash, dependency.dstSubpass);
+        hash = HashCombine(hash, dependency.srcStageMask);
+        hash = HashCombine(hash, dependency.dstStageMask);
+        hash = HashCombine(hash, dependency.srcAccessMask);
+        hash = HashCombine(hash, dependency.dstAccessMask);
+        hash = HashCombine(hash, dependency.dependencyFlags);
+    }
+
+    return hash;
+}
+
+bool RenderPassReplayCompatible(const VkRenderPassCreateInfo* info)
+{
+    return info && info->pNext == nullptr &&
+           std::all_of(info->pAttachments, info->pAttachments + info->attachmentCount,
+               [](const VkAttachmentDescription& attachment)
+               {
+                   return attachment.pNext == nullptr;
+               });
+}
+
+void RecordRenderPassCreate(const VkRenderPassCreateInfo* info, uint64_t sequence, uint64_t hash)
+{
+    if (!RecordingEnabled() || !info)
+        return;
+
+    const char* path = RecordingPath();
+    if (!path)
+        return;
+
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(file,
+            "{\"schema\":3,\"event\":\"render_pass_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"attachments\":[",
+            static_cast<unsigned long long>(sequence),
+            static_cast<unsigned long long>(hash),
+            info->flags,
+            RenderPassReplayCompatible(info) ? "true" : "false");
+
+        for (uint32_t i = 0; i < info->attachmentCount; ++i)
+        {
+            if (i) std::fputc(',', file);
+            const auto& attachment = info->pAttachments[i];
+            std::fprintf(file,
+                "{\"flags\":%u,\"format\":%d,\"samples\":%u,\"load_op\":%u,\"store_op\":%u,\"stencil_load_op\":%u,\"stencil_store_op\":%u,\"initial_layout\":%u,\"final_layout\":%u}",
+                attachment.flags,
+                attachment.format,
+                attachment.samples,
+                attachment.loadOp,
+                attachment.storeOp,
+                attachment.stencilLoadOp,
+                attachment.stencilStoreOp,
+                attachment.initialLayout,
+                attachment.finalLayout);
+        }
+
+        std::fputs("],\"subpasses\":[", file);
+        for (uint32_t i = 0; i < info->subpassCount; ++i)
+        {
+            if (i) std::fputc(',', file);
+            const auto& subpass = info->pSubpasses[i];
+
+            std::fprintf(file,
+                "{\"flags\":%u,\"pipeline_bind_point\":%u,\"input_attachments\":[",
+                subpass.flags, subpass.pipelineBindPoint);
+
+            for (uint32_t ref = 0; ref < subpass.inputAttachmentCount; ++ref)
+            {
+                if (ref) std::fputc(',', file);
+                std::fprintf(file,
+                    "{\"attachment\":%u,\"layout\":%u}",
+                    subpass.pInputAttachments[ref].attachment,
+                    subpass.pInputAttachments[ref].layout);
+            }
+
+            std::fputs("],\"color_attachments\":[", file);
+            for (uint32_t ref = 0; ref < subpass.colorAttachmentCount; ++ref)
+            {
+                if (ref) std::fputc(',', file);
+                std::fprintf(file,
+                    "{\"attachment\":%u,\"layout\":%u}",
+                    subpass.pColorAttachments[ref].attachment,
+                    subpass.pColorAttachments[ref].layout);
+            }
+
+            std::fputs("],\"resolve_attachments\":[", file);
+            if (subpass.pResolveAttachments)
+            {
+                for (uint32_t ref = 0; ref < subpass.colorAttachmentCount; ++ref)
+                {
+                    if (ref) std::fputc(',', file);
+                    std::fprintf(file,
+                        "{\"attachment\":%u,\"layout\":%u}",
+                        subpass.pResolveAttachments[ref].attachment,
+                        subpass.pResolveAttachments[ref].layout);
+                }
+            }
+
+            std::fputs("],\"depth_stencil\":", file);
+            if (subpass.pDepthStencilAttachment)
+            {
+                std::fprintf(file,
+                    "{\"attachment\":%u,\"layout\":%u}",
+                    subpass.pDepthStencilAttachment->attachment,
+                    subpass.pDepthStencilAttachment->layout);
+            }
+            else
+            {
+                std::fputs("null", file);
+            }
+
+            std::fputs(",\"preserve_attachments\":[", file);
+            for (uint32_t ref = 0; ref < subpass.preserveAttachmentCount; ++ref)
+            {
+                if (ref) std::fputc(',', file);
+                std::fprintf(file, "%u", subpass.pPreserveAttachments[ref]);
+            }
+
+            std::fputs("]}", file);
+        }
+
+        std::fputs("],\"dependencies\":[", file);
+        for (uint32_t i = 0; i < info->dependencyCount; ++i)
+        {
+            if (i) std::fputc(',', file);
+            const auto& dependency = info->pDependencies[i];
+            std::fprintf(file,
+                "{\"src_subpass\":%u,\"dst_subpass\":%u,\"src_stage_mask\":%u,\"dst_stage_mask\":%u,\"src_access_mask\":%u,\"dst_access_mask\":%u,\"dependency_flags\":%u}",
+                dependency.srcSubpass,
+                dependency.dstSubpass,
+                dependency.srcStageMask,
+                dependency.dstStageMask,
+                dependency.srcAccessMask,
+                dependency.dstAccessMask,
+                dependency.dependencyFlags);
+        }
+
+        std::fputs("]}\n", file);
+        std::fclose(file);
+    }
+}
+
 const char* ShaderStageName(VkShaderStageFlagBits stage)
 {
     switch (stage)
