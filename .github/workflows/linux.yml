@@ -119,3 +119,10 @@ jobs:
             - \
             build/vulkan-smoke/graphics-warmed.cache.bin
           test -s build/vulkan-smoke/graphics-warmed.cache.bin
+      - name: Exercise C# Vulkan warmer integration in CI
+        run: |
+          timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            warm-vulkan build/vulkan-smoke/capture.jsonl \
+            --output-cache build/vulkan-smoke/managed-warmed.cache.bin \
+            --warmer ${{ github.workspace }}/build/vulkan-warmer/scskiller-vulkan-warmer
+          test -s build/vulkan-smoke/managed-warmed.cache.bin
