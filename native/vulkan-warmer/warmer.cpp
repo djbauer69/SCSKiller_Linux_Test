@@ -106,6 +106,146 @@ struct ComputePipelineRecord
     SpecializationRecord specialization;
 };
 
+struct GraphicsStageRecord
+{
+    VkShaderStageFlagBits stage = VK_SHADER_STAGE_VERTEX_BIT;
+    VkPipelineShaderStageCreateFlags flags = 0;
+    uint64_t moduleHash = 0;
+    std::string entryPoint = "main";
+    SpecializationRecord specialization;
+};
+
+struct ViewportRecord
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 1.0f;
+    float height = 1.0f;
+    float minDepth = 0.0f;
+    float maxDepth = 1.0f;
+};
+
+struct ScissorRecord
+{
+    int32_t offsetX = 0;
+    int32_t offsetY = 0;
+    uint32_t width = 1;
+    uint32_t height = 1;
+};
+
+struct VertexBindingRecord
+{
+    uint32_t binding = 0;
+    uint32_t stride = 0;
+    VkVertexInputRate inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+};
+
+struct VertexAttributeRecord
+{
+    uint32_t location = 0;
+    uint32_t binding = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    uint32_t offset = 0;
+};
+
+struct StencilRecord
+{
+    VkStencilOp failOp = VK_STENCIL_OP_KEEP;
+    VkStencilOp passOp = VK_STENCIL_OP_KEEP;
+    VkStencilOp depthFailOp = VK_STENCIL_OP_KEEP;
+    VkCompareOp compareOp = VK_COMPARE_OP_ALWAYS;
+    uint32_t compareMask = 0;
+    uint32_t writeMask = 0;
+    uint32_t reference = 0;
+};
+
+struct ColorBlendAttachmentRecord
+{
+    VkBool32 blendEnable = VK_FALSE;
+    VkBlendFactor srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    VkBlendOp colorBlendOp = VK_BLEND_OP_ADD;
+    VkBlendFactor srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    VkBlendOp alphaBlendOp = VK_BLEND_OP_ADD;
+    VkColorComponentFlags colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                            VK_COLOR_COMPONENT_G_BIT |
+                                            VK_COLOR_COMPONENT_B_BIT |
+                                            VK_COLOR_COMPONENT_A_BIT;
+};
+
+struct GraphicsPipelineRecord
+{
+    uint64_t layoutHash = 0;
+    uint64_t renderPassHash = 0;
+    VkPipelineCreateFlags flags = 0;
+    uint32_t subpass = 0;
+    int32_t basePipelineIndex = -1;
+    std::vector<GraphicsStageRecord> stages;
+
+    std::vector<VertexBindingRecord> vertexBindings;
+    std::vector<VertexAttributeRecord> vertexAttributes;
+
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkBool32 primitiveRestartEnable = VK_FALSE;
+
+    bool hasTessellation = false;
+    uint32_t patchControlPoints = 0;
+
+    bool hasViewportState = false;
+    uint32_t viewportCount = 1;
+    uint32_t scissorCount = 1;
+    std::vector<ViewportRecord> viewports;
+    std::vector<ScissorRecord> scissors;
+
+    bool hasRasterization = false;
+    VkBool32 depthClampEnable = VK_FALSE;
+    VkBool32 rasterizerDiscardEnable = VK_FALSE;
+    VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
+    VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkBool32 depthBiasEnable = VK_FALSE;
+    float depthBiasConstantFactor = 0.0f;
+    float depthBiasClamp = 0.0f;
+    float depthBiasSlopeFactor = 0.0f;
+    float lineWidth = 1.0f;
+
+    bool hasMultisample = false;
+    VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkBool32 sampleShadingEnable = VK_FALSE;
+    float minSampleShading = 1.0f;
+    VkBool32 alphaToCoverageEnable = VK_FALSE;
+    VkBool32 alphaToOneEnable = VK_FALSE;
+    std::vector<uint32_t> sampleMask;
+
+    bool hasDepthStencil = false;
+    VkBool32 depthTestEnable = VK_FALSE;
+    VkBool32 depthWriteEnable = VK_FALSE;
+    VkCompareOp depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    VkBool32 depthBoundsTestEnable = VK_FALSE;
+    float minDepthBounds = 0.0f;
+    float maxDepthBounds = 1.0f;
+    VkBool32 stencilTestEnable = VK_FALSE;
+    StencilRecord frontStencil;
+    StencilRecord backStencil;
+
+    bool hasColorBlend = false;
+    VkBool32 logicOpEnable = VK_FALSE;
+    VkLogicOp logicOp = VK_LOGIC_OP_COPY;
+    float blendConstants[4] = {};
+    std::vector<ColorBlendAttachmentRecord> colorBlendAttachments;
+
+    std::vector<VkDynamicState> dynamicStates;
+
+    bool dynamicRendering = false;
+    uint32_t viewMask = 0;
+    std::vector<VkFormat> colorFormats;
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+    VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
+
+    bool replayCompatible = true;
+};
+
 struct Recording
 {
     std::unordered_map<uint64_t, ShaderRecord> shaders;
@@ -113,6 +253,7 @@ struct Recording
     std::unordered_map<uint64_t, PipelineLayoutRecord> pipelineLayouts;
     std::unordered_map<uint64_t, RenderPassRecord> renderPasses;
     std::vector<ComputePipelineRecord> computePipelines;
+    std::vector<GraphicsPipelineRecord> graphicsPipelinesToReplay;
     size_t graphicsPipelines = 0;
     size_t rayTracingPipelines = 0;
 };
