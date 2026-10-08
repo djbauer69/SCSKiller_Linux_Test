@@ -19,11 +19,16 @@ bool Check(VkResult result, const char* operation)
 
 int main(int argc, char** argv)
 {
-    const bool graphicsMode = argc >= 2 && std::string(argv[1]) == "--graphics";
+    const bool graphicsMode = argc >= 2 &&
+        (std::string(argv[1]) == "--graphics" ||
+         std::string(argv[1]) == "--dynamic-graphics");
+    const bool dynamicGraphicsMode = argc >= 2 &&
+        std::string(argv[1]) == "--dynamic-graphics";
     if ((!graphicsMode && argc > 2) || (graphicsMode && argc != 4))
     {
         std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
-                  << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n";
+                  << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n"
+                  << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n";
         return 1;
     }
 
@@ -134,6 +139,38 @@ int main(int argc, char** argv)
         nullptr,
         nullptr
     };
+
+    VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+        nullptr,
+        VK_FALSE
+    };
+
+    if (dynamicGraphicsMode)
+    {
+        VkPhysicalDeviceFeatures2 features2{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            &dynamicRenderingFeatures,
+            {}
+        };
+        auto getFeatures2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+            vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"));
+        if (!getFeatures2)
+        {
+            std::cerr << "Dynamic rendering requires vkGetPhysicalDeviceFeatures2\n";
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+        getFeatures2(physicalDevice, &features2);
+        if (dynamicRenderingFeatures.dynamicRendering != VK_TRUE)
+        {
+            std::cerr << "Selected Vulkan device does not support dynamic rendering\n";
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+        dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+        deviceInfo.pNext = &dynamicRenderingFeatures;
+    }
 
     VkDevice device = VK_NULL_HANDLE;
     if (!Check(vkCreateDevice(physicalDevice, &deviceInfo, nullptr, &device), "vkCreateDevice"))
@@ -303,7 +340,8 @@ int main(int argc, char** argv)
         };
 
         VkRenderPass renderPass = VK_NULL_HANDLE;
-        if (!Check(vkCreateRenderPass(
+        if (!dynamicGraphicsMode &&
+            !Check(vkCreateRenderPass(
                        device, &renderPassInfo, nullptr, &renderPass),
                    "vkCreateRenderPass"))
         {
@@ -415,9 +453,19 @@ int main(int argc, char** argv)
             {0.0f, 0.0f, 0.0f, 0.0f}
         };
 
+        VkPipelineRenderingCreateInfo renderingInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            nullptr,
+            0,
+            1,
+            &colorAttachment.format,
+            VK_FORMAT_UNDEFINED,
+            VK_FORMAT_UNDEFINED
+        };
+
         VkGraphicsPipelineCreateInfo graphicsInfo{
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            nullptr,
+            dynamicGraphicsMode ? &renderingInfo : nullptr,
             0,
             2,
             stages,
@@ -431,7 +479,7 @@ int main(int argc, char** argv)
             &colorBlend,
             nullptr,
             pipelineLayout,
-            renderPass,
+            dynamicGraphicsMode ? VK_NULL_HANDLE : renderPass,
             0,
             VK_NULL_HANDLE,
             -1
@@ -442,7 +490,8 @@ int main(int argc, char** argv)
                        device, pipelineCache, 1, &graphicsInfo, nullptr, &graphicsPipeline),
                    "vkCreateGraphicsPipelines"))
         {
-            vkDestroyRenderPass(device, renderPass, nullptr);
+            if (renderPass)
+                vkDestroyRenderPass(device, renderPass, nullptr);
             vkDestroyShaderModule(device, fragmentShader, nullptr);
             vkDestroyShaderModule(device, vertexShader, nullptr);
             vkDestroyPipelineCache(device, pipelineCache, nullptr);
@@ -456,7 +505,8 @@ int main(int argc, char** argv)
         std::cout << "Graphics pipeline and render-pass hooks exercised successfully\\n";
 
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
-        vkDestroyRenderPass(device, renderPass, nullptr);
+        if (renderPass)
+            vkDestroyRenderPass(device, renderPass, nullptr);
         vkDestroyShaderModule(device, fragmentShader, nullptr);
         vkDestroyShaderModule(device, vertexShader, nullptr);
     }
