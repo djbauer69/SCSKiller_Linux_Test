@@ -6,6 +6,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine();
     Console.WriteLine("Commands:");
     Console.WriteLine("  path <vulkan|d3d12|d3d11|d3d10|d3d9|d3d8>  Show the Linux graphics path");
+    Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
     return;
 }
@@ -19,17 +20,24 @@ switch (args[0])
             Environment.ExitCode = 2;
             return;
         }
-
         var path = GraphicsPathDetector.ForApi(api);
         Console.WriteLine($"{path.Api} -> {path.Backend} ({path.RuntimeName ?? "unknown"})");
         break;
 
+    case "runtime":
+        var runtime = LinuxRuntimeDetector.Detect();
+        Console.WriteLine($"Linux: {runtime.IsLinux}");
+        Console.WriteLine($"Proton environment: {runtime.IsProton}");
+        Console.WriteLine($"STEAM_COMPAT_DATA_PATH: {runtime.ProtonPrefix ?? "<not set>"}");
+        Console.WriteLine($"Proton executable/path: {runtime.ProtonExecutable ?? "<not set>"}");
+        Console.WriteLine($"DXVK path: {runtime.DxvkPath ?? "<not set>"}");
+        Console.WriteLine($"vkd3d-proton path: {runtime.Vkd3dPath ?? "<not set>"}");
+        break;
+
     case "record-info":
-        Console.WriteLine("Vulkan recorder:");
-        Console.WriteLine("  SCSKILLER_VK_RECORD=1");
-        Console.WriteLine("  SCSKILLER_VK_RECORD_FILE=/path/to/record.jsonl");
-        Console.WriteLine();
-        Console.WriteLine("The recorder is experimental and currently emits diagnostic pipeline events.");
+        Console.WriteLine("SCSKILLER_VK_RECORD=1");
+        Console.WriteLine("SCSKILLER_VK_RECORD_FILE=/path/to/record.jsonl");
+        Console.WriteLine("Recorder status: experimental diagnostic capture");
         break;
 
     default:
