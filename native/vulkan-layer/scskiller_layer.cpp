@@ -564,7 +564,40 @@ vkCreatePipelineCache(VkDevice device,
     if (!dispatch.CreatePipelineCache)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    const char* replayPath = std::getenv("SCSKILLER_VK_REPLAY_CACHE");
+    if (!replayPath || !replayPath[0] || !createInfo || createInfo->initialDataSize != 0)
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+
+    std::FILE* file = std::fopen(replayPath, "rb");
+    if (!file)
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+
+    std::fseek(file, 0, SEEK_END);
+    const long length = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+
+    if (length <= 0)
+    {
+        std::fclose(file);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
+
+    std::string data(static_cast<size_t>(length), '\\0');
+    const size_t read = std::fread(data.data(), 1, data.size(), file);
+    std::fclose(file);
+
+    if (read != data.size())
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+
+    VkPipelineCacheCreateInfo replayInfo = *createInfo;
+    replayInfo.initialDataSize = data.size();
+    replayInfo.pInitialData = data.data();
+
+    VkResult result = dispatch.CreatePipelineCache(device, &replayInfo, allocator, pipelineCache);
+    if (result == VK_SUCCESS)
+        RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+
+    return result;
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
