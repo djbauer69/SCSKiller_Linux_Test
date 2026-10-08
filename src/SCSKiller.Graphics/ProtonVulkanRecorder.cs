@@ -63,9 +63,9 @@ public static class ProtonVulkanRecorder
         psi.Environment["SCSKILLER_VK_RECORD"] = "1";
         psi.Environment["SCSKILLER_VK_RECORD_FILE"] = recordingPath;
         psi.Environment["VK_INSTANCE_LAYERS"] =
-            PrependEnvironmentPath("VK_INSTANCE_LAYERS", "VK_LAYER_SCSKILLER", psi.Environment);
+            PrependEnvironmentPath("VK_INSTANCE_LAYERS", "VK_LAYER_SCSKILLER");
         psi.Environment["VK_LAYER_PATH"] =
-            PrependEnvironmentPath("VK_LAYER_PATH", Path.GetFullPath(options.VulkanLayerDirectory), psi.Environment);
+            PrependEnvironmentPath("VK_LAYER_PATH", Path.GetFullPath(options.VulkanLayerDirectory));
 
         if (options.DebugLayer)
             psi.Environment["SCSKILLER_VK_DEBUG"] = "1";
@@ -89,10 +89,7 @@ public static class ProtonVulkanRecorder
             recordingPath);
     }
 
-    private static string PrependEnvironmentPath(
-        string variableName,
-        string value,
-        System.Collections.Generic.IDictionary<string, string?> environment)
+    private static string PrependEnvironmentPath(string variableName, string value)
     {
         var existing = Environment.GetEnvironmentVariable(variableName);
         return string.IsNullOrWhiteSpace(existing)
