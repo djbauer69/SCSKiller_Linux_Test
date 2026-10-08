@@ -838,6 +838,58 @@ vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumerateInstanceExtensionProperties(const char* layerName,
+                                       uint32_t* propertyCount,
+                                       VkExtensionProperties* properties)
+{
+    (void)properties;
+
+    if (!propertyCount)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    if (!layerName || std::strcmp(layerName, kLayerName) != 0)
+        return VK_ERROR_LAYER_NOT_PRESENT;
+
+    *propertyCount = 0;
+    return VK_SUCCESS;
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
+                                     const char* layerName,
+                                     uint32_t* propertyCount,
+                                     VkExtensionProperties* properties)
+{
+    if (!propertyCount)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    if (layerName && std::strcmp(layerName, kLayerName) == 0)
+    {
+        *propertyCount = 0;
+        return VK_SUCCESS;
+    }
+
+    VkInstance instance = VK_NULL_HANDLE;
+    if (physicalDevice != VK_NULL_HANDLE)
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_physicalDeviceInstances.find(physicalDevice);
+        if (it != g_physicalDeviceInstances.end())
+            instance = it->second;
+    }
+
+    if (!g_nextInstanceProcAddr || instance == VK_NULL_HANDLE)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    auto enumerateNext = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+        g_nextInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
+    if (!enumerateNext)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    return enumerateNext(physicalDevice, layerName, propertyCount, properties);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkEnumerateInstanceLayerProperties(uint32_t* propertyCount, VkLayerProperties* properties)
 {
     if (!propertyCount)
@@ -1617,6 +1669,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice);
     if (std::strcmp(name, "vkEnumerateInstanceLayerProperties") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceLayerProperties);
+    if (std::strcmp(name, "vkEnumerateInstanceExtensionProperties") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceExtensionProperties);
+    if (std::strcmp(name, "vkEnumerateDeviceExtensionProperties") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateDeviceExtensionProperties);
 
     return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
 }
