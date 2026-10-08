@@ -1,4 +1,5 @@
 #include <vulkan/vulkan.h>
+#include <vulkan/vk_layer.h>
 
 #include <atomic>
 #include <cstdint>
@@ -22,6 +23,7 @@ struct DeviceDispatch
     PFN_vkDestroyShaderModule DestroyShaderModule = nullptr;
     PFN_vkCreateGraphicsPipelines CreateGraphicsPipelines = nullptr;
     PFN_vkCreateComputePipelines CreateComputePipelines = nullptr;
+    PFN_vkCreateRayTracingPipelinesKHR CreateRayTracingPipelinesKHR = nullptr;
     PFN_vkCreatePipelineCache CreatePipelineCache = nullptr;
     PFN_vkGetPipelineCacheData GetPipelineCacheData = nullptr;
     PFN_vkDestroyPipelineCache DestroyPipelineCache = nullptr;
@@ -30,6 +32,7 @@ struct DeviceDispatch
 std::mutex g_mutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
 std::atomic<uint64_t> g_sequence{1};
+PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
 
 bool RecordingEnabled()
 {
@@ -37,7 +40,7 @@ bool RecordingEnabled()
     return value && value[0] && std::strcmp(value, "0") != 0;
 }
 
-void RecordLine(const char* event, uint64_t sequence, uint32_t count)
+uint64_t HashWords(const uint32_t* words, size_t count)\n{\n    uint64_t hash = 1469598103934665603ull;\n    for (size_t i = 0; i < count; ++i) {\n        hash ^= words[i];\n        hash *= 1099511628211ull;\n    }\n    return hash;\n}\n\nvoid RecordLine(const char* event, uint64_t sequence, uint32_t count)
 {
     if (!RecordingEnabled())
         return;
