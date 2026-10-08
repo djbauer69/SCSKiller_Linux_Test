@@ -219,6 +219,20 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
         dispatch.DestroyDevice(device, allocator);
 }
 
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyShaderModule(VkDevice device, VkShaderModule shaderModule, const VkAllocationCallbacks* allocator)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end()) return;
+        dispatch = it->second;
+        g_shaderHashes.erase(shaderModule);
+    }
+    if (dispatch.DestroyShaderModule)
+        dispatch.DestroyShaderModule(device, shaderModule, allocator);
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* createInfo, const VkAllocationCallbacks* allocator, VkShaderModule* shaderModule)
 {
@@ -320,6 +334,8 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines);
     if (std::strcmp(name, "vkCreateShaderModule") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule);
+    if (std::strcmp(name, "vkDestroyShaderModule") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyShaderModule);
     if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
 
