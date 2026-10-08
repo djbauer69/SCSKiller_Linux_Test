@@ -123,6 +123,15 @@ void Debug(const char* message)
         std::fprintf(stderr, "[SCSKiller Vulkan] %s\n", message);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((constructor))
+#endif
+void ScskillerLayerLoaded()
+{
+    Debug("layer shared object initialized");
+}
+
+
 bool RecordingEnabled()
 {
     const char* value = std::getenv(kRecordEnv);
@@ -858,6 +867,7 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
                  const VkAllocationCallbacks* allocator,
                  VkInstance* instance)
 {
+    Debug("vkCreateInstance: entered");
     auto* linkInfo = FindInstanceLinkInfo(createInfo);
     if (!linkInfo || !linkInfo->u.pLayerInfo || !instance)
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -1590,7 +1600,8 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
          std::strcmp(name, "vkEnumeratePhysicalDevices") == 0 ||
          std::strcmp(name, "vkCreateDevice") == 0))
     {
-        std::fprintf(stderr, "[SCSKiller Vulkan] GIPA %s\\n", name);
+        std::fprintf(stderr, "[SCSKiller Vulkan] GIPA %s
+", name);
     }
 
     if (std::strcmp(name, "vkNegotiateLoaderLayerInterfaceVersion") == 0)
