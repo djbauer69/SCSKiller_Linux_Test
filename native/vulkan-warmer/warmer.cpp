@@ -864,7 +864,8 @@ bool WriteBinaryFile(const std::string& path, const void* data, size_t size)
 void DestroyContext(VkContext& context,
                     std::unordered_map<uint64_t, VkDescriptorSetLayout>& descriptorLayouts,
                     std::unordered_map<uint64_t, VkPipelineLayout>& pipelineLayouts,
-                    std::unordered_map<uint64_t, VkShaderModule>& shaderModules)
+                    std::unordered_map<uint64_t, VkShaderModule>& shaderModules,
+                    std::unordered_map<uint64_t, VkRenderPass>& renderPasses)
 {
     for (const auto& [hash, pipelineLayout] : pipelineLayouts)
         vkDestroyPipelineLayout(context.device, pipelineLayout, nullptr);
@@ -872,6 +873,8 @@ void DestroyContext(VkContext& context,
         vkDestroyDescriptorSetLayout(context.device, descriptorLayout, nullptr);
     for (const auto& [hash, shaderModule] : shaderModules)
         vkDestroyShaderModule(context.device, shaderModule, nullptr);
+    for (const auto& [hash, renderPass] : renderPasses)
+        vkDestroyRenderPass(context.device, renderPass, nullptr);
 
     if (context.cache && context.device)
         vkDestroyPipelineCache(context.device, context.cache, nullptr);
@@ -1044,6 +1047,7 @@ int Run(const std::string& recordingPath,
     std::unordered_map<uint64_t, VkDescriptorSetLayout> descriptorLayouts;
     std::unordered_map<uint64_t, VkPipelineLayout> pipelineLayouts;
     std::unordered_map<uint64_t, VkShaderModule> shaderModules;
+    std::unordered_map<uint64_t, VkRenderPass> renderPasses;
 
     for (const auto& [hash, record] : recording.descriptorLayouts)
     {
@@ -1086,10 +1090,120 @@ int Run(const std::string& recordingPath,
                        context.device, &info, nullptr, &layout),
                    "vkCreateDescriptorSetLayout"))
         {
-            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
             return 1;
         }
         descriptorLayouts.emplace(hash, layout);
+    }
+
+    for (const auto& [hash, record] : recording.renderPasses)
+    {
+        if (!record.replayCompatible)
+        {
+            std::cerr << "Skipping render pass " << std::hex << hash << std::dec
+                      << ": capture contains unsupported pNext state\n";
+            continue;
+        }
+
+        std::vector<VkAttachmentDescription> attachments;
+        attachments.reserve(record.attachments.size());
+        for (const auto& attachment : record.attachments)
+            attachments.push_back(attachment.description);
+
+        std::vector<std::vector<VkAttachmentReference>> inputRefs(record.subpasses.size());
+        std::vector<std::vector<VkAttachmentReference>> colorRefs(record.subpasses.size());
+        std::vector<std::vector<VkAttachmentReference>> resolveRefs(record.subpasses.size());
+        std::vector<std::vector<uint32_t>> preserveRefs(record.subpasses.size());
+        std::vector<VkSubpassDescription> subpasses(record.subpasses.size());
+
+        for (size_t i = 0; i < record.subpasses.size(); ++i)
+        {
+            const auto& source = record.subpasses[i];
+            auto& input = inputRefs[i];
+            auto& color = colorRefs[i];
+            auto& resolve = resolveRefs[i];
+            auto& preserve = preserveRefs[i];
+
+            for (const auto& reference : source.inputAttachments)
+                input.push_back({reference.attachment, reference.layout});
+            for (const auto& reference : source.colorAttachments)
+                color.push_back({reference.attachment, reference.layout});
+            for (const auto& reference : source.resolveAttachments)
+                resolve.push_back({reference.attachment, reference.layout});
+            preserve = source.preserveAttachments;
+
+            VkSubpassDescription& destination = subpasses[i];
+            destination = {
+                source.flags,
+                source.pipelineBindPoint,
+                static_cast<uint32_t>(input.size()),
+                input.data(),
+                static_cast<uint32_t>(color.size()),
+                color.data(),
+                resolve.empty() ? nullptr : resolve.data(),
+                nullptr,
+                static_cast<uint32_t>(preserve.size()),
+                preserve.data()
+            };
+
+            if (source.hasDepthStencil)
+            {
+                static VkAttachmentReference dummy{};
+                dummy = {source.depthStencil.attachment, source.depthStencil.layout};
+                destination.pDepthStencilAttachment = &dummy;
+            }
+        }
+
+        std::vector<VkAttachmentReference> depthReferences;
+        depthReferences.reserve(record.subpasses.size());
+        for (size_t i = 0; i < record.subpasses.size(); ++i)
+        {
+            if (!record.subpasses[i].hasDepthStencil)
+                continue;
+            depthReferences.push_back({
+                record.subpasses[i].depthStencil.attachment,
+                record.subpasses[i].depthStencil.layout
+            });
+            subpasses[i].pDepthStencilAttachment = &depthReferences.back();
+        }
+
+        std::vector<VkSubpassDependency> dependencies;
+        dependencies.reserve(record.dependencies.size());
+        for (const auto& dependency : record.dependencies)
+        {
+            dependencies.push_back({
+                dependency.srcSubpass,
+                dependency.dstSubpass,
+                dependency.srcStageMask,
+                dependency.dstStageMask,
+                dependency.srcAccessMask,
+                dependency.dstAccessMask,
+                dependency.dependencyFlags
+            });
+        }
+
+        VkRenderPassCreateInfo info{
+            VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            nullptr,
+            record.flags,
+            static_cast<uint32_t>(attachments.size()),
+            attachments.data(),
+            static_cast<uint32_t>(subpasses.size()),
+            subpasses.data(),
+            static_cast<uint32_t>(dependencies.size()),
+            dependencies.data()
+        };
+
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        if (!Check(vkCreateRenderPass(
+                       context.device, &info, nullptr, &renderPass),
+                   "vkCreateRenderPass"))
+        {
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
+            return 1;
+        }
+
+        renderPasses.emplace(hash, renderPass);
     }
 
     for (const auto& [hash, record] : recording.pipelineLayouts)
@@ -1139,7 +1253,7 @@ int Run(const std::string& recordingPath,
                        context.device, &info, nullptr, &layout),
                    "vkCreatePipelineLayout"))
         {
-            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
             return 1;
         }
         pipelineLayouts.emplace(hash, layout);
@@ -1159,7 +1273,7 @@ int Run(const std::string& recordingPath,
                        context.device, &info, nullptr, &module),
                    "vkCreateShaderModule"))
         {
-            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
             return 1;
         }
         shaderModules.emplace(hash, module);
@@ -1262,7 +1376,7 @@ int Run(const std::string& recordingPath,
               << ", skipped " << skipped
               << ", failed " << failed << "\\n";
 
-    DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+    DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
     return failed == 0 ? 0 : 1;
 }
 }
