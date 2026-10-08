@@ -697,11 +697,12 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 }
 
                 std::fprintf(file,
-                    "{\"stage\":\"%s\",\"stage_flags\":%u,\"module_hash\":\"%016llx\",\"entry_point\":\"%s\",\"specialization\":",
+                    "{\"stage\":\"%s\",\"stage_flags\":%u,\"module_hash\":\"%016llx\",\"entry_point\":\"%s\",\"pnext_present\":%s,\"specialization\":",
                     ShaderStageName(state.stage),
                     state.flags,
                     static_cast<unsigned long long>(shaderHash),
-                    JsonEscape(state.pName ? state.pName : "main").c_str());
+                    JsonEscape(state.pName ? state.pName : "main").c_str(),
+                    state.pNext ? "true" : "false");
                 RecordSpecialization(file, state.pSpecializationInfo);
                 std::fputc('}', file);
             }
@@ -757,6 +758,22 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
             {
                 std::fputs(",\"dynamic_rendering\":null", file);
             }
+
+            bool pipelinePnextSupported = true;
+            for (const auto* pipelineNode = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
+                 pipelineNode;
+                 pipelineNode = pipelineNode->pNext)
+            {
+                if (pipelineNode->sType != VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO)
+                {
+                    pipelinePnextSupported = false;
+                    break;
+                }
+            }
+            if (info.basePipelineIndex >= 0)
+                pipelinePnextSupported = false;
+            std::fprintf(file, ",\"replay_compatible\":%s",
+                         pipelinePnextSupported ? "true" : "false");
 
             if (info.pVertexInputState)
             {
