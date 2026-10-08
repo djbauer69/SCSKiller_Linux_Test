@@ -74,6 +74,37 @@ jobs:
           grep -q '"event":"pipeline_layout_create"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"pipeline_cache_snapshot"' build/vulkan-smoke/capture.jsonl
+      - name: Compile Vulkan graphics smoke shaders
+        run: |
+          cat > build/vulkan-smoke/vertex.vert <<'EOF'
+          #version 450
+          void main() {
+              gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+          }
+          EOF
+          cat > build/vulkan-smoke/fragment.frag <<'EOF'
+          #version 450
+          layout(location = 0) out vec4 outColor;
+          void main() {
+              outColor = vec4(1.0, 0.0, 1.0, 1.0);
+          }
+          EOF
+          glslc -fshader-stage=vertex build/vulkan-smoke/vertex.vert -o build/vulkan-smoke/vertex.spv
+          glslc -fshader-stage=fragment build/vulkan-smoke/fragment.frag -o build/vulkan-smoke/fragment.spv
+      - name: Run Vulkan graphics capture smoke test
+        env:
+          VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/vulkan-install/lib
+          VK_INSTANCE_LAYERS: VK_LAYER_SCSKILLER
+          NODEVICE_SELECT: "1"
+          SCSKILLER_VK_RECORD: "1"
+          SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/graphics-capture.jsonl
+        run: |
+          timeout 60s build/vulkan-probe/scskiller-vulkan-probe --graphics             build/vulkan-smoke/vertex.spv build/vulkan-smoke/fragment.spv
+          test -s build/vulkan-smoke/graphics-capture.jsonl
+          grep -q '"event":"shader_module_code"' build/vulkan-smoke/graphics-capture.jsonl
+          grep -q '"event":"render_pass_create"' build/vulkan-smoke/graphics-capture.jsonl
+          grep -q '"event":"graphics_pipeline_state"' build/vulkan-smoke/graphics-capture.jsonl
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
