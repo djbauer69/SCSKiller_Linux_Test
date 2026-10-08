@@ -14,10 +14,6 @@ target_include_directories(VK_LAYER_SCSKILLER PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-target_link_libraries(VK_LAYER_SCSKILLER PRIVATE
-    Vulkan::Vulkan
-)
-
 set_target_properties(VK_LAYER_SCSKILLER PROPERTIES
     PREFIX ""
     OUTPUT_NAME "VK_LAYER_SCSKILLER"
