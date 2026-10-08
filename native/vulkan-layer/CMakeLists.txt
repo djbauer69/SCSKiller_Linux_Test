@@ -22,3 +22,6 @@ set_target_properties(VK_LAYER_SCSKILLER PROPERTIES
     PREFIX ""
     OUTPUT_NAME "VK_LAYER_SCSKILLER"
 )
+
+install(TARGETS VK_LAYER_SCSKILLER LIBRARY DESTINATION lib)
+install(FILES layer.json DESTINATION share/vulkan/implicit_layer.d)
