@@ -31,6 +31,7 @@ struct DeviceDispatch
 
 std::mutex g_mutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
+std::unordered_map<VkShaderModule, uint64_t> g_shaderHashes;
 std::atomic<uint64_t> g_sequence{1};
 PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
 
@@ -242,7 +243,12 @@ vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* createInfo
             }
         }
     }
-    return dispatch.CreateShaderModule(device, createInfo, allocator, shaderModule);
+    VkResult result = dispatch.CreateShaderModule(device, createInfo, allocator, shaderModule);
+    if (result == VK_SUCCESS && createInfo && createInfo->pCode && createInfo->codeSize >= sizeof(uint32_t) && shaderModule) {
+        std::lock_guard lock(g_mutex);
+        g_shaderHashes[*shaderModule] = HashWords(createInfo->pCode, createInfo->codeSize / sizeof(uint32_t));
+    }
+    return result;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateGraphicsPipelines(VkDevice device,
