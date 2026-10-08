@@ -14,6 +14,28 @@ namespace
 {
 constexpr char kLayerName[] = "VK_LAYER_SCSKILLER";
 constexpr char kRecordEnv[] = "SCSKILLER_VK_RECORD";
+constexpr char kRecordFileEnv[] = "SCSKILLER_VK_RECORD_FILE";
+
+struct ShaderKey
+{
+    VkDevice device{};
+    VkShaderModule module{};
+
+    bool operator==(const ShaderKey& other) const
+    {
+        return device == other.device && module == other.module;
+    }
+};
+
+struct ShaderKeyHash
+{
+    size_t operator()(const ShaderKey& key) const noexcept
+    {
+        const auto a = reinterpret_cast<uintptr_t>(key.device);
+        const auto b = reinterpret_cast<uintptr_t>(key.module);
+        return static_cast<size_t>((a >> 4) ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2)));
+    }
+};
 
 struct DeviceDispatch
 {
@@ -31,7 +53,7 @@ struct DeviceDispatch
 
 std::mutex g_mutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
-std::unordered_map<VkShaderModule, uint64_t> g_shaderHashes;
+std::unordered_map<ShaderKey, uint64_t, ShaderKeyHash> g_shaderHashes;
 std::atomic<uint64_t> g_sequence{1};
 PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
 
@@ -41,24 +63,64 @@ bool RecordingEnabled()
     return value && value[0] && std::strcmp(value, "0") != 0;
 }
 
-uint64_t HashWords(const uint32_t* words, size_t count)\n{\n    uint64_t hash = 1469598103934665603ull;\n    for (size_t i = 0; i < count; ++i) {\n        hash ^= words[i];\n        hash *= 1099511628211ull;\n    }\n    return hash;\n}\n\nvoid RecordLine(const char* event, uint64_t sequence, uint32_t count)
+const char* RecordingPath()
+{
+    const char* path = std::getenv(kRecordFileEnv);
+    return path && path[0] ? path : nullptr;
+}
+
+uint64_t HashWords(const uint32_t* words, size_t count)
+{
+    uint64_t hash = 1469598103934665603ull;
+    for (size_t i = 0; i < count; ++i)
+    {
+        hash ^= words[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+void RecordShader(const char* event, uint64_t sequence, uint64_t hash, size_t wordCount)
 {
     if (!RecordingEnabled())
         return;
 
-    const char* path = std::getenv("SCSKILLER_VK_RECORD_FILE");
-    if (!path || !path[0])
+    const char* path = RecordingPath();
+    if (!path)
         return;
 
-    std::FILE* file = std::fopen(path, "ab");
-    if (!file)
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(
+            file,
+            "{\"schema\":1,\"event\":\"%s\",\"sequence\":%llu,\"code_words\":%zu,\"hash\":\"%016llx\"}\n",
+            event,
+            static_cast<unsigned long long>(sequence),
+            wordCount,
+            static_cast<unsigned long long>(hash));
+        std::fclose(file);
+    }
+}
+
+void RecordCount(const char* event, uint64_t sequence, uint32_t count)
+{
+    if (!RecordingEnabled())
         return;
 
-    std::fprintf(file, "{\"event\":\"%s\",\"sequence\":%llu,\"count\":%u}\n",
-                 event,
-                 static_cast<unsigned long long>(sequence),
-                 count);
-    std::fclose(file);
+    const char* path = RecordingPath();
+    if (!path)
+        return;
+
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(
+            file,
+            "{\"schema\":1,\"event\":\"%s\",\"sequence\":%llu,\"count\":%u}\n",
+            event,
+            static_cast<unsigned long long>(sequence),
+            count);
+        std::fclose(file);
+    }
 }
 
 VkLayerInstanceCreateInfo* FindInstanceLinkInfo(const VkInstanceCreateInfo* createInfo)
@@ -105,6 +167,22 @@ VkLayerDeviceCreateInfo* FindDeviceLinkInfo(const VkDeviceCreateInfo* createInfo
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
+{
+    if (!versionStruct)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    if (versionStruct->sType != LAYER_NEGOTIATE_INTERFACE_STRUCT)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    if (versionStruct->loaderLayerInterfaceVersion < 2)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    versionStruct->loaderLayerInterfaceVersion = 2;
+    return VK_SUCCESS;
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkEnumerateInstanceLayerProperties(uint32_t* propertyCount, VkLayerProperties* properties)
 {
     if (!propertyCount)
@@ -140,6 +218,8 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
 
     auto next = linkInfo->u.pLayerInfo;
     linkInfo->u.pLayerInfo = next->pNext;
+
+    g_nextInstanceProcAddr = next->pfnNextGetInstanceProcAddr;
 
     auto createNext = reinterpret_cast<PFN_vkCreateInstance>(
         next->pfnNextGetInstanceProcAddr(VK_NULL_HANDLE, "vkCreateInstance"));
@@ -190,6 +270,8 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
         dispatch.GetDeviceProcAddr(*device, "vkCreateGraphicsPipelines"));
     dispatch.CreateComputePipelines = reinterpret_cast<PFN_vkCreateComputePipelines>(
         dispatch.GetDeviceProcAddr(*device, "vkCreateComputePipelines"));
+    dispatch.CreateRayTracingPipelinesKHR = reinterpret_cast<PFN_vkCreateRayTracingPipelinesKHR>(
+        dispatch.GetDeviceProcAddr(*device, "vkCreateRayTracingPipelinesKHR"));
     dispatch.CreatePipelineCache = reinterpret_cast<PFN_vkCreatePipelineCache>(
         dispatch.GetDeviceProcAddr(*device, "vkCreatePipelineCache"));
     dispatch.GetPipelineCacheData = reinterpret_cast<PFN_vkGetPipelineCacheData>(
@@ -211,8 +293,17 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
         auto it = g_devices.find(device);
         if (it == g_devices.end())
             return;
+
         dispatch = it->second;
         g_devices.erase(it);
+
+        for (auto shader = g_shaderHashes.begin(); shader != g_shaderHashes.end();)
+        {
+            if (shader->first.device == device)
+                shader = g_shaderHashes.erase(shader);
+            else
+                ++shader;
+        }
     }
 
     if (dispatch.DestroyDevice)
@@ -220,50 +311,66 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkDestroyShaderModule(VkDevice device, VkShaderModule shaderModule, const VkAllocationCallbacks* allocator)
+vkDestroyShaderModule(VkDevice device,
+                      VkShaderModule shaderModule,
+                      const VkAllocationCallbacks* allocator)
 {
     DeviceDispatch dispatch{};
     {
         std::lock_guard lock(g_mutex);
         auto it = g_devices.find(device);
-        if (it == g_devices.end()) return;
+        if (it == g_devices.end())
+            return;
+
         dispatch = it->second;
-        g_shaderHashes.erase(shaderModule);
+        g_shaderHashes.erase(ShaderKey{device, shaderModule});
     }
+
     if (dispatch.DestroyShaderModule)
         dispatch.DestroyShaderModule(device, shaderModule, allocator);
 }
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
-vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* createInfo, const VkAllocationCallbacks* allocator, VkShaderModule* shaderModule)
+vkCreateShaderModule(VkDevice device,
+                     const VkShaderModuleCreateInfo* createInfo,
+                     const VkAllocationCallbacks* allocator,
+                     VkShaderModule* shaderModule)
 {
     DeviceDispatch dispatch{};
     {
         std::lock_guard lock(g_mutex);
         auto it = g_devices.find(device);
-        if (it == g_devices.end()) return VK_ERROR_DEVICE_LOST;
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+
         dispatch = it->second;
     }
-    if (!dispatch.CreateShaderModule) return VK_ERROR_INITIALIZATION_FAILED;
-    if (createInfo && createInfo->pCode && createInfo->codeSize >= sizeof(uint32_t)) {
-        const auto hash = HashWords(createInfo->pCode, createInfo->codeSize / sizeof(uint32_t));
-        if (RecordingEnabled()) {
-            const char* path = std::getenv("SCSKILLER_VK_RECORD_FILE");
-            if (path && path[0]) {
-                if (std::FILE* file = std::fopen(path, "ab")) {
-                    const auto sequence = g_sequence.fetch_add(1);
-                    std::fprintf(file, "{\"event\":\"shader_module_create\",\"sequence\":%llu,\"code_words\":%zu,\"hash\":\"%016llx\"}\n", static_cast<unsigned long long>(sequence), createInfo->codeSize / sizeof(uint32_t), static_cast<unsigned long long>(hash));
-                    std::fclose(file);
-                }
-            }
-        }
+
+    if (!dispatch.CreateShaderModule)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    uint64_t hash = 0;
+    size_t wordCount = 0;
+    if (createInfo && createInfo->pCode && createInfo->codeSize >= sizeof(uint32_t))
+    {
+        wordCount = createInfo->codeSize / sizeof(uint32_t);
+        hash = HashWords(createInfo->pCode, wordCount);
     }
+
     VkResult result = dispatch.CreateShaderModule(device, createInfo, allocator, shaderModule);
-    if (result == VK_SUCCESS && createInfo && createInfo->pCode && createInfo->codeSize >= sizeof(uint32_t) && shaderModule) {
+
+    if (result == VK_SUCCESS && hash != 0 && shaderModule)
+    {
         std::lock_guard lock(g_mutex);
-        g_shaderHashes[*shaderModule] = HashWords(createInfo->pCode, createInfo->codeSize / sizeof(uint32_t));
+        g_shaderHashes[ShaderKey{device, *shaderModule}] = hash;
     }
+
+    if (hash != 0)
+        RecordShader("shader_module_create", g_sequence.fetch_add(1), hash, wordCount);
+
     return result;
 }
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateGraphicsPipelines(VkDevice device,
                           VkPipelineCache pipelineCache,
@@ -278,14 +385,17 @@ vkCreateGraphicsPipelines(VkDevice device,
         auto it = g_devices.find(device);
         if (it == g_devices.end())
             return VK_ERROR_DEVICE_LOST;
+
         dispatch = it->second;
     }
 
     if (!dispatch.CreateGraphicsPipelines)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    const auto sequence = g_sequence.fetch_add(1);
-    RecordLine("graphics_pipeline_create", sequence, createInfoCount);
+    RecordCount(
+        "graphics_pipeline_create",
+        g_sequence.fetch_add(1),
+        createInfoCount);
 
     return dispatch.CreateGraphicsPipelines(
         device, pipelineCache, createInfoCount, createInfos, allocator, pipelines);
@@ -305,39 +415,79 @@ vkCreateComputePipelines(VkDevice device,
         auto it = g_devices.find(device);
         if (it == g_devices.end())
             return VK_ERROR_DEVICE_LOST;
+
         dispatch = it->second;
     }
 
     if (!dispatch.CreateComputePipelines)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    const auto sequence = g_sequence.fetch_add(1);
-    RecordLine("compute_pipeline_create", sequence, createInfoCount);
+    RecordCount(
+        "compute_pipeline_create",
+        g_sequence.fetch_add(1),
+        createInfoCount);
 
     return dispatch.CreateComputePipelines(
         device, pipelineCache, createInfoCount, createInfos, allocator, pipelines);
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateRayTracingPipelinesKHR(VkDevice device,
+                               VkDeferredOperationKHR deferredOperation,
+                               VkPipelineCache pipelineCache,
+                               uint32_t createInfoCount,
+                               const VkRayTracingPipelineCreateInfoKHR* createInfos,
+                               const VkAllocationCallbacks* allocator,
+                               VkPipeline* pipelines)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+
+        dispatch = it->second;
+    }
+
+    if (!dispatch.CreateRayTracingPipelinesKHR)
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+    RecordCount(
+        "ray_tracing_pipeline_create",
+        g_sequence.fetch_add(1),
+        createInfoCount);
+
+    return dispatch.CreateRayTracingPipelinesKHR(
+        device,
+        deferredOperation,
+        pipelineCache,
+        createInfoCount,
+        createInfos,
+        allocator,
+        pipelines);
+}
+
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetDeviceProcAddr(VkDevice device, const char* name)
 {
     if (!name)
         return nullptr;
 
-    if (std::strcmp(name, "vkCreateDevice") == 0)
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice);
+    if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceProcAddr);
     if (std::strcmp(name, "vkDestroyDevice") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice);
     if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines);
+    if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
     if (std::strcmp(name, "vkCreateShaderModule") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule);
     if (std::strcmp(name, "vkDestroyShaderModule") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyShaderModule);
-    if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
 
     std::lock_guard lock(g_mutex);
     auto it = g_devices.find(device);
@@ -353,6 +503,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
     if (!name)
         return nullptr;
 
+    if (std::strcmp(name, "vkNegotiateLoaderLayerInterfaceVersion") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkNegotiateLoaderLayerInterfaceVersion);
+    if (std::strcmp(name, "vkGetInstanceProcAddr") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkGetInstanceProcAddr);
     if (std::strcmp(name, "vkCreateInstance") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateInstance);
     if (std::strcmp(name, "vkCreateDevice") == 0)
