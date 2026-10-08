@@ -582,7 +582,7 @@ vkCreatePipelineCache(VkDevice device,
         return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
     }
 
-    std::string data(static_cast<size_t>(length), '\\0');
+    std::string data(static_cast<size_t>(length), '\0');
     const size_t read = std::fread(data.data(), 1, data.size(), file);
     std::fclose(file);
 
