@@ -364,12 +364,7 @@ uint64_t HashRenderPassCreateInfo(const VkRenderPassCreateInfo* info)
 
 bool RenderPassReplayCompatible(const VkRenderPassCreateInfo* info)
 {
-    return info && info->pNext == nullptr &&
-           std::all_of(info->pAttachments, info->pAttachments + info->attachmentCount,
-               [](const VkAttachmentDescription& attachment)
-               {
-                   return attachment.pNext == nullptr;
-               });
+    return info && info->pNext == nullptr;
 }
 
 void RecordRenderPassCreate(const VkRenderPassCreateInfo* info, uint64_t sequence, uint64_t hash)
@@ -711,9 +706,22 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 std::fputc('}', file);
             }
 
+            uint64_t renderPassHash = 0;
+            if (info.renderPass != VK_NULL_HANDLE)
+            {
+                std::lock_guard lock(g_mutex);
+                auto it = g_renderPassHashes.find(RenderPassKey{device, info.renderPass});
+                if (it != g_renderPassHashes.end())
+                    renderPassHash = it->second;
+            }
+
             std::fprintf(file,
-                "],\"flags\":%u,\"subpass\":%u,\"base_pipeline_index\":%d",
-                info.flags, info.subpass, info.basePipelineIndex);
+                "],\"flags\":%u,\"subpass\":%u,\"base_pipeline_index\":%d,\"render_pass_hash\":\"%016llx\",\"render_pass_present\":%s",
+                info.flags,
+                info.subpass,
+                info.basePipelineIndex,
+                static_cast<unsigned long long>(renderPassHash),
+                info.renderPass != VK_NULL_HANDLE ? "true" : "false");
 
             const bool hasLegacyRenderPass = info.renderPass != VK_NULL_HANDLE;
             std::fprintf(file, ",\"legacy_render_pass\":%s", hasLegacyRenderPass ? "true" : "false");
@@ -1286,6 +1294,10 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
         dispatch.GetDeviceProcAddr(*device, "vkCreatePipelineLayout"));
     dispatch.DestroyPipelineLayout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(
         dispatch.GetDeviceProcAddr(*device, "vkDestroyPipelineLayout"));
+    dispatch.CreateRenderPass = reinterpret_cast<PFN_vkCreateRenderPass>(
+        dispatch.GetDeviceProcAddr(*device, "vkCreateRenderPass"));
+    dispatch.DestroyRenderPass = reinterpret_cast<PFN_vkDestroyRenderPass>(
+        dispatch.GetDeviceProcAddr(*device, "vkDestroyRenderPass"));
     dispatch.CreateShaderModule = reinterpret_cast<PFN_vkCreateShaderModule>(
         dispatch.GetDeviceProcAddr(*device, "vkCreateShaderModule"));
     dispatch.DestroyShaderModule = reinterpret_cast<PFN_vkDestroyShaderModule>(
@@ -1344,10 +1356,71 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
             else
                 ++layout;
         }
+
+        for (auto renderPass = g_renderPassHashes.begin(); renderPass != g_renderPassHashes.end();)
+        {
+            if (renderPass->first.device == device)
+                renderPass = g_renderPassHashes.erase(renderPass);
+            else
+                ++renderPass;
+        }
     }
 
     if (dispatch.DestroyDevice)
         dispatch.DestroyDevice(device, allocator);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateRenderPass(VkDevice device,
+                   const VkRenderPassCreateInfo* createInfo,
+                   const VkAllocationCallbacks* allocator,
+                   VkRenderPass* renderPass)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+
+    if (!dispatch.CreateRenderPass)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    const uint64_t hash = HashRenderPassCreateInfo(createInfo);
+    const VkResult result = dispatch.CreateRenderPass(device, createInfo, allocator, renderPass);
+    if (result == VK_SUCCESS && renderPass && hash)
+    {
+        {
+            std::lock_guard lock(g_mutex);
+            g_renderPassHashes[RenderPassKey{device, *renderPass}] = hash;
+        }
+
+        RecordRenderPassCreate(createInfo, g_sequence.fetch_add(1), hash);
+    }
+
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyRenderPass(VkDevice device,
+                    VkRenderPass renderPass,
+                    const VkAllocationCallbacks* allocator)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return;
+
+        dispatch = it->second;
+        g_renderPassHashes.erase(RenderPassKey{device, renderPass});
+    }
+
+    if (dispatch.DestroyRenderPass)
+        dispatch.DestroyRenderPass(device, renderPass, allocator);
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -1854,6 +1927,10 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineLayout);
     if (std::strcmp(name, "vkDestroyPipelineLayout") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineLayout);
+    if (std::strcmp(name, "vkCreateRenderPass") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass);
+    if (std::strcmp(name, "vkDestroyRenderPass") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyRenderPass);
     if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
