@@ -47,6 +47,8 @@ struct DeviceDispatch
     PFN_vkDestroyDescriptorSetLayout DestroyDescriptorSetLayout = nullptr;
     PFN_vkCreatePipelineLayout CreatePipelineLayout = nullptr;
     PFN_vkDestroyPipelineLayout DestroyPipelineLayout = nullptr;
+    PFN_vkCreateRenderPass CreateRenderPass = nullptr;
+    PFN_vkDestroyRenderPass DestroyRenderPass = nullptr;
     PFN_vkCreateShaderModule CreateShaderModule = nullptr;
     PFN_vkDestroyShaderModule DestroyShaderModule = nullptr;
     PFN_vkCreateGraphicsPipelines CreateGraphicsPipelines = nullptr;
@@ -106,6 +108,31 @@ struct PipelineLayoutKeyHash
 
 std::unordered_map<DescriptorLayoutKey, uint64_t, DescriptorLayoutKeyHash> g_descriptorLayoutHashes;
 std::unordered_map<PipelineLayoutKey, uint64_t, PipelineLayoutKeyHash> g_pipelineLayoutHashes;
+
+struct RenderPassKey
+{
+    VkDevice device{};
+    VkRenderPass renderPass{};
+
+    bool operator==(const RenderPassKey& other) const
+    {
+        return device == other.device && renderPass == other.renderPass;
+    }
+};
+
+struct RenderPassKeyHash
+{
+    size_t operator()(const RenderPassKey& key) const noexcept
+    {
+        const auto deviceBits = reinterpret_cast<uintptr_t>(key.device);
+        const auto renderPassBits = static_cast<uint64_t>(key.renderPass);
+        return static_cast<size_t>(
+            (deviceBits >> 4) ^
+            (renderPassBits + 0x243f6a8885a308d3ull + (deviceBits << 6) + (deviceBits >> 2)));
+    }
+};
+
+std::unordered_map<RenderPassKey, uint64_t, RenderPassKeyHash> g_renderPassHashes;
 
 std::atomic<uint64_t> g_sequence{1};
 PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
