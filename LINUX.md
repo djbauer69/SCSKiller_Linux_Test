@@ -29,3 +29,10 @@ vkd3d-proton owns its shader/pipeline cache, and DXVK maintains its own shader/s
 8. Linux CI and hardware validation.
 
 The existing Windows D3D12 proxy remains unchanged.
+
+
+## Current replay milestone
+
+The native Vulkan warmer can reconstruct recorded compute pipelines when the capture contains reconstructible descriptor-set layouts and pipeline layouts. CI exercises this path with a real GLSL compute shader, Vulkan pipeline creation, JSONL capture, and a second Vulkan process that rebuilds the compute pipeline and writes a driver-owned pipeline-cache blob.
+
+Graphics pipeline replay remains deliberately gated on fuller fixed-function and rendering-state capture.
