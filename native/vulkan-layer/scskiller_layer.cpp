@@ -257,6 +257,9 @@ vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
         return VK_ERROR_INITIALIZATION_FAILED;
 
     versionStruct->loaderLayerInterfaceVersion = 2;
+    versionStruct->pfnGetInstanceProcAddr = vkGetInstanceProcAddr;
+    versionStruct->pfnGetDeviceProcAddr = vkGetDeviceProcAddr;
+    versionStruct->pfnGetPhysicalDeviceProcAddr = nullptr;
     return VK_SUCCESS;
 }
 
