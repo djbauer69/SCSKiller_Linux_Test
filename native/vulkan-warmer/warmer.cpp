@@ -753,7 +753,8 @@ bool ParseGraphicsPipelineState(
             record.replayCompatible = compatible;
 
         bool legacyRenderPass = false;
-        if (FindBool(entry, "legacy_render_pass", legacyRenderPass) &&
+        if (!record.dynamicRendering &&
+            FindBool(entry, "legacy_render_pass", legacyRenderPass) &&
             !legacyRenderPass)
         {
             record.replayCompatible = false;
