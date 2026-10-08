@@ -548,26 +548,32 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 std::fprintf(file,
                     ",\"viewport_state\":{\"flags\":%u,\"viewport_count\":%u,\"scissor_count\":%u,\"viewports\":[",
                     state.flags, state.viewportCount, state.scissorCount);
-                for (uint32_t viewport = 0; viewport < state.viewportCount; ++viewport)
+                if (state.pViewports)
                 {
-                    if (viewport) std::fputc(',', file);
-                    const auto& value = state.pViewports[viewport];
-                    std::fputs("{\"x\":", file); writeFloat(file, value.x);
-                    std::fputs(",\"y\":", file); writeFloat(file, value.y);
-                    std::fputs(",\"width\":", file); writeFloat(file, value.width);
-                    std::fputs(",\"height\":", file); writeFloat(file, value.height);
-                    std::fputs(",\"min_depth\":", file); writeFloat(file, value.minDepth);
-                    std::fputs(",\"max_depth\":", file); writeFloat(file, value.maxDepth);
-                    std::fputc('}', file);
+                    for (uint32_t viewport = 0; viewport < state.viewportCount; ++viewport)
+                    {
+                        if (viewport) std::fputc(',', file);
+                        const auto& value = state.pViewports[viewport];
+                        std::fputs("{\"x\":", file); writeFloat(file, value.x);
+                        std::fputs(",\"y\":", file); writeFloat(file, value.y);
+                        std::fputs(",\"width\":", file); writeFloat(file, value.width);
+                        std::fputs(",\"height\":", file); writeFloat(file, value.height);
+                        std::fputs(",\"min_depth\":", file); writeFloat(file, value.minDepth);
+                        std::fputs(",\"max_depth\":", file); writeFloat(file, value.maxDepth);
+                        std::fputc('}', file);
+                    }
                 }
                 std::fputs("],\"scissors\":[", file);
-                for (uint32_t scissor = 0; scissor < state.scissorCount; ++scissor)
+                if (state.pScissors)
                 {
-                    if (scissor) std::fputc(',', file);
-                    const auto& value = state.pScissors[scissor];
-                    std::fprintf(file,
-                        "{\"offset_x\":%d,\"offset_y\":%d,\"extent_width\":%u,\"extent_height\":%u}",
-                        value.offset.x, value.offset.y, value.extent.width, value.extent.height);
+                    for (uint32_t scissor = 0; scissor < state.scissorCount; ++scissor)
+                    {
+                        if (scissor) std::fputc(',', file);
+                        const auto& value = state.pScissors[scissor];
+                        std::fprintf(file,
+                            "{\"offset_x\":%d,\"offset_y\":%d,\"extent_width\":%u,\"extent_height\":%u}",
+                            value.offset.x, value.offset.y, value.extent.width, value.extent.height);
+                    }
                 }
                 std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
             }
@@ -671,16 +677,19 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     writeFloat(file, state.blendConstants[constant]);
                 }
                 std::fputs("],\"attachments\":[", file);
-                for (uint32_t attachment = 0; attachment < state.attachmentCount; ++attachment)
+                if (state.pAttachments)
                 {
-                    if (attachment) std::fputc(',', file);
-                    const auto& value = state.pAttachments[attachment];
+                    for (uint32_t attachment = 0; attachment < state.attachmentCount; ++attachment)
+                    {
+                        if (attachment) std::fputc(',', file);
+                        const auto& value = state.pAttachments[attachment];
                     std::fprintf(file,
                         "{\"blend_enable\":%s,\"src_color_factor\":%u,\"dst_color_factor\":%u,\"color_op\":%u,\"src_alpha_factor\":%u,\"dst_alpha_factor\":%u,\"alpha_op\":%u,\"color_write_mask\":%u}",
                         value.blendEnable ? "true" : "false",
                         value.srcColorBlendFactor, value.dstColorBlendFactor, value.colorBlendOp,
                         value.srcAlphaBlendFactor, value.dstAlphaBlendFactor, value.alphaBlendOp,
-                        value.colorWriteMask);
+                            value.colorWriteMask);
+                    }
                 }
                 std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
             }
