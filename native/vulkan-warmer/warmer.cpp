@@ -183,6 +183,8 @@ struct GraphicsPipelineRecord
     int32_t basePipelineIndex = -1;
     std::vector<GraphicsStageRecord> stages;
 
+    bool hasVertexInput = false;
+    bool hasInputAssembly = false;
     std::vector<VertexBindingRecord> vertexBindings;
     std::vector<VertexAttributeRecord> vertexAttributes;
 
@@ -373,6 +375,11 @@ bool FindHex(std::string_view line, std::string_view key, uint64_t& value)
     }
 }
 
+
+bool DecodeBase64(std::string_view encoded, std::vector<uint8_t>& output);
+bool ExtractArray(std::string_view line, std::string_view key, std::string_view& contents);
+bool ExtractObject(std::string_view line, std::string_view key, std::string_view& contents);
+std::vector<std::string_view> SplitArray(std::string_view contents);
 
 bool FindBool(std::string_view line, std::string_view key, bool& value)
 {
@@ -2274,7 +2281,7 @@ int Run(const std::string& recordingPath,
             record.lineWidth
         };
 
-        VkSampleMask* sampleMask = record.sampleMask.empty()
+        const VkSampleMask* sampleMask = record.sampleMask.empty()
             ? nullptr
             : record.sampleMask.data();
 
