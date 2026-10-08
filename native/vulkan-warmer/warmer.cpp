@@ -248,8 +248,20 @@ struct GraphicsPipelineRecord
     bool replayCompatible = true;
 };
 
+struct PhysicalDeviceIdentityRecord
+{
+    bool present = false;
+    uint32_t vendorId = 0;
+    uint32_t deviceId = 0;
+    uint32_t driverVersion = 0;
+    uint32_t apiVersion = VK_API_VERSION_1_0;
+    std::string deviceName;
+    std::string pipelineCacheUuid;
+};
+
 struct Recording
 {
+    PhysicalDeviceIdentityRecord physicalDevice;
     std::unordered_map<uint64_t, ShaderRecord> shaders;
     std::unordered_map<uint64_t, DescriptorLayoutRecord> descriptorLayouts;
     std::unordered_map<uint64_t, PipelineLayoutRecord> pipelineLayouts;
@@ -1178,6 +1190,23 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
             continue;
 
         uint64_t hash = 0;
+        if (event == "physical_device_identity")
+        {
+            recording.physicalDevice.present = true;
+            uint64_t value = 0;
+            if (!FindUnsigned(line, "vendor_id", value)) return false;
+            recording.physicalDevice.vendorId = static_cast<uint32_t>(value);
+            if (!FindUnsigned(line, "device_id", value)) return false;
+            recording.physicalDevice.deviceId = static_cast<uint32_t>(value);
+            if (!FindUnsigned(line, "driver_version", value)) return false;
+            recording.physicalDevice.driverVersion = static_cast<uint32_t>(value);
+            if (!FindUnsigned(line, "api_version", value)) return false;
+            recording.physicalDevice.apiVersion = static_cast<uint32_t>(value);
+            FindString(line, "device_name", recording.physicalDevice.deviceName);
+            FindString(line, "pipeline_cache_uuid", recording.physicalDevice.pipelineCacheUuid);
+            continue;
+        }
+
         if (event == "shader_module_code")
         {
             if (!FindHex(line, "hash", hash))
@@ -1725,6 +1754,50 @@ int Run(const std::string& recordingPath,
         return 1;
     }
     context.physicalDevice = devices[0];
+
+    if (recording.physicalDevice.present)
+    {
+        VkPhysicalDevice fallback = VK_NULL_HANDLE;
+        for (const auto device : devices)
+        {
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(device, &properties);
+
+            if (properties.vendorID == recording.physicalDevice.vendorId &&
+                properties.deviceID == recording.physicalDevice.deviceId)
+            {
+                if (fallback == VK_NULL_HANDLE)
+                    fallback = device;
+
+                char uuid[VK_UUID_SIZE * 2 + 1]{};
+                for (size_t i = 0; i < VK_UUID_SIZE; ++i)
+                    std::snprintf(uuid + (i * 2), 3, "%02x", properties.pipelineCacheUUID[i]);
+
+                if (recording.physicalDevice.pipelineCacheUuid == uuid)
+                {
+                    context.physicalDevice = device;
+                    break;
+                }
+            }
+        }
+
+        if (context.physicalDevice == devices[0] &&
+            recording.physicalDevice.vendorId != 0 &&
+            fallback != VK_NULL_HANDLE)
+        {
+            context.physicalDevice = fallback;
+        }
+
+        VkPhysicalDeviceProperties selectedProperties{};
+        vkGetPhysicalDeviceProperties(context.physicalDevice, &selectedProperties);
+        std::cout << "Selected Vulkan device: " << selectedProperties.deviceName << "\n";
+
+        if (selectedProperties.vendorID != recording.physicalDevice.vendorId ||
+            selectedProperties.deviceID != recording.physicalDevice.deviceId)
+        {
+            std::cerr << "Warning: recorded GPU identity does not match selected device; replay may miss\n";
+        }
+    }
 
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(context.physicalDevice, &queueFamilyCount, nullptr);
