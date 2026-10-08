@@ -24,6 +24,18 @@ jobs:
         run: cmake -S native/vulkan-layer -B build/vulkan-layer -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build native Vulkan layer
         run: cmake --build build/vulkan-layer
+      - name: Inspect Vulkan layer ABI exports
+        run: |
+          nm -D --defined-only build/vulkan-layer/VK_LAYER_SCSKILLER.so | grep -E 'vk(CreateInstance|GetInstanceProcAddr|NegotiateLoaderLayerInterfaceVersion|layerGetPhysicalDeviceProcAddr)'
+          python3 - <<'PY'
+          import ctypes
+          lib = ctypes.CDLL("build/vulkan-layer/VK_LAYER_SCSKILLER.so")
+          gipa = lib.vkGetInstanceProcAddr
+          gipa.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+          gipa.restype = ctypes.c_void_p
+          assert gipa(None, b"vkCreateInstance"), "layer GIPA did not return vkCreateInstance"
+          print("Layer ABI GIPA returned vkCreateInstance")
+          PY
       - name: Configure Vulkan probe
         run: cmake -S native/vulkan-probe -B build/vulkan-probe -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build Vulkan probe
