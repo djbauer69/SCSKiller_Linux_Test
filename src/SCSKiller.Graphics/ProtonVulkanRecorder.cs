@@ -66,6 +66,12 @@ public static class ProtonVulkanRecorder
             PrependEnvironmentPath("VK_INSTANCE_LAYERS", "VK_LAYER_SCSKILLER");
         psi.Environment["VK_LAYER_PATH"] =
             PrependEnvironmentPath("VK_LAYER_PATH", Path.GetFullPath(options.VulkanLayerDirectory));
+        var layerLibraryDirectory = FindLayerLibraryDirectory(options.VulkanLayerDirectory);
+        if (layerLibraryDirectory is not null)
+        {
+            psi.Environment["LD_LIBRARY_PATH"] =
+                PrependEnvironmentPath("LD_LIBRARY_PATH", layerLibraryDirectory);
+        }
 
         if (options.DebugLayer)
             psi.Environment["SCSKILLER_VK_DEBUG"] = "1";
@@ -87,6 +93,13 @@ public static class ProtonVulkanRecorder
             await stdoutTask,
             await stderrTask,
             recordingPath);
+    }
+
+    private static string? FindLayerLibraryDirectory(string layerDirectory)
+    {
+        var candidate = Path.GetFullPath(
+            Path.Combine(layerDirectory, "..", "..", "..", "lib"));
+        return Directory.Exists(candidate) ? candidate : null;
     }
 
     private static string PrependEnvironmentPath(string variableName, string value)
