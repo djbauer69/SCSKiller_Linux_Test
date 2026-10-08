@@ -16,6 +16,7 @@ namespace
 constexpr char kLayerName[] = "VK_LAYER_SCSKILLER";
 constexpr char kRecordEnv[] = "SCSKILLER_VK_RECORD";
 constexpr char kRecordFileEnv[] = "SCSKILLER_VK_RECORD_FILE";
+constexpr char kDebugEnv[] = "SCSKILLER_VK_DEBUG";
 
 struct ShaderKey
 {
@@ -58,6 +59,7 @@ struct DeviceDispatch
 
 std::mutex g_mutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
+std::unordered_map<VkPhysicalDevice, VkInstance> g_physicalDeviceInstances;
 std::unordered_map<ShaderKey, uint64_t, ShaderKeyHash> g_shaderHashes;
 
 struct DescriptorLayoutKey
@@ -107,6 +109,19 @@ std::unordered_map<PipelineLayoutKey, uint64_t, PipelineLayoutKeyHash> g_pipelin
 
 std::atomic<uint64_t> g_sequence{1};
 PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
+PFN_GetPhysicalDeviceProcAddr g_nextPhysicalDeviceProcAddr = nullptr;
+
+bool DebugEnabled()
+{
+    const char* value = std::getenv(kDebugEnv);
+    return value && value[0] && std::strcmp(value, "0") != 0;
+}
+
+void Debug(const char* message)
+{
+    if (DebugEnabled())
+        std::fprintf(stderr, "[SCSKiller Vulkan] %s\\n", message);
+}
 
 bool RecordingEnabled()
 {
@@ -849,6 +864,8 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
     linkInfo->u.pLayerInfo = next->pNext;
 
     g_nextInstanceProcAddr = next->pfnNextGetInstanceProcAddr;
+    g_nextPhysicalDeviceProcAddr = next->pfnNextGetPhysicalDeviceProcAddr;
+    Debug("vkCreateInstance: calling next layer/driver");
 
     auto createNext = reinterpret_cast<PFN_vkCreateInstance>(
         next->pfnNextGetInstanceProcAddr(VK_NULL_HANDLE, "vkCreateInstance"));
@@ -856,7 +873,58 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
     if (!createNext)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    return createNext(createInfo, allocator, instance);
+    const VkResult result = createNext(createInfo, allocator, instance);
+    if (result == VK_SUCCESS)
+        Debug("vkCreateInstance: success");
+    else
+        Debug("vkCreateInstance: failed");
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator)
+{
+    Debug("vkDestroyInstance");
+
+    if (g_nextInstanceProcAddr)
+    {
+        auto destroyNext = reinterpret_cast<PFN_vkDestroyInstance>(
+            g_nextInstanceProcAddr(instance, "vkDestroyInstance"));
+        if (destroyNext)
+            destroyNext(instance, allocator);
+    }
+
+    for (auto it = g_physicalDeviceInstances.begin(); it != g_physicalDeviceInstances.end();)
+    {
+        if (it->second == instance)
+            it = g_physicalDeviceInstances.erase(it);
+        else
+            ++it;
+    }
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumeratePhysicalDevices(VkInstance instance,
+                           uint32_t* deviceCount,
+                           VkPhysicalDevice* physicalDevices)
+{
+    if (!g_nextInstanceProcAddr)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    auto enumerateNext = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
+        g_nextInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"));
+    if (!enumerateNext)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    const VkResult result = enumerateNext(instance, deviceCount, physicalDevices);
+    if ((result == VK_SUCCESS || result == VK_INCOMPLETE) &&
+        deviceCount && physicalDevices)
+    {
+        for (uint32_t i = 0; i < *deviceCount; ++i)
+            g_physicalDeviceInstances[physicalDevices[i]] = instance;
+    }
+
+    return result;
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -872,19 +940,35 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
     auto next = linkInfo->u.pLayerInfo;
     linkInfo->u.pLayerInfo = next->pNext;
 
+    VkInstance instance = VK_NULL_HANDLE;
+    {
+        auto it = g_physicalDeviceInstances.find(physicalDevice);
+        if (it != g_physicalDeviceInstances.end())
+            instance = it->second;
+    }
+
+    if (instance == VK_NULL_HANDLE)
+    {
+        Debug("vkCreateDevice: physical device has no known parent instance");
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    Debug("vkCreateDevice: resolving next vkCreateDevice with parent instance");
     auto createNext = reinterpret_cast<PFN_vkCreateDevice>(
-        next->pfnNextGetInstanceProcAddr(VK_NULL_HANDLE, "vkCreateDevice"));
+        next->pfnNextGetInstanceProcAddr(instance, "vkCreateDevice"));
 
     if (!createNext)
+    {
+        Debug("vkCreateDevice: next vkCreateDevice was not found");
         return VK_ERROR_INITIALIZATION_FAILED;
+    }
 
     VkResult result = createNext(physicalDevice, createInfo, allocator, device);
     if (result != VK_SUCCESS)
         return result;
 
     DeviceDispatch dispatch{};
-    dispatch.GetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
-        next->pfnNextGetInstanceProcAddr(VK_NULL_HANDLE, "vkGetDeviceProcAddr"));
+    dispatch.GetDeviceProcAddr = next->pfnNextGetDeviceProcAddr;
 
     if (!dispatch.GetDeviceProcAddr)
         return result;
@@ -1504,6 +1588,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkGetInstanceProcAddr);
     if (std::strcmp(name, "vkCreateInstance") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateInstance);
+    if (std::strcmp(name, "vkDestroyInstance") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyInstance);
+    if (std::strcmp(name, "vkEnumeratePhysicalDevices") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices);
     if (std::strcmp(name, "vkCreateDevice") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice);
     if (std::strcmp(name, "vkEnumerateInstanceLayerProperties") == 0)
@@ -1516,8 +1604,11 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetPhysicalDeviceProcAddr(VkInstance instance, const char* name)
 {
-    if (!name || !g_nextInstanceProcAddr)
+    if (!name)
         return nullptr;
 
-    return g_nextInstanceProcAddr(instance, name);
+    if (g_nextPhysicalDeviceProcAddr)
+        return g_nextPhysicalDeviceProcAddr(instance, name);
+
+    return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
 }
