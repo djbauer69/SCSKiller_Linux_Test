@@ -1,6 +1,6 @@
 # Vulkan recording format
 
-The runtime recorder emits newline-delimited JSON (JSONL). Each event has a monotonically increasing sequence and currently uses schema version 1.
+The runtime recorder emits newline-delimited JSON (JSONL). Each event has a monotonically increasing sequence and currently uses schema versions 1 and 2.
 
 Current event types:
 
