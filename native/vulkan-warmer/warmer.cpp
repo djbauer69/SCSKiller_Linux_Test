@@ -373,6 +373,168 @@ bool FindHex(std::string_view line, std::string_view key, uint64_t& value)
     }
 }
 
+
+bool FindBool(std::string_view line, std::string_view key, bool& value)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start))
+        return false;
+
+    if (line.substr(start, 4) == "true")
+    {
+        value = true;
+        return true;
+    }
+    if (line.substr(start, 5) == "false")
+    {
+        value = false;
+        return true;
+    }
+    return false;
+}
+
+bool FindSigned(std::string_view line, std::string_view key, int64_t& value)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start))
+        return false;
+
+    size_t end = start;
+    if (end < line.size() && line[end] == '-')
+        ++end;
+    const size_t digitsStart = end;
+    while (end < line.size() &&
+           std::isdigit(static_cast<unsigned char>(line[end])))
+    {
+        ++end;
+    }
+    if (end == digitsStart)
+        return false;
+
+    try
+    {
+        value = std::stoll(std::string(line.substr(start, end - start)));
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool FindFloat(std::string_view line, std::string_view key, float& value)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start))
+        return false;
+
+    size_t end = start;
+    while (end < line.size() &&
+           line[end] != ',' &&
+           line[end] != '}' &&
+           line[end] != ']')
+    {
+        ++end;
+    }
+
+    try
+    {
+        value = std::stof(Trim(std::string(line.substr(start, end - start))));
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool ParseSpecialization(
+    std::string_view object,
+    SpecializationRecord& specialization,
+    std::string& error)
+{
+    specialization.present = true;
+
+    std::string encoded;
+    if (FindString(object, "data_base64", encoded) &&
+        !encoded.empty() &&
+        !DecodeBase64(encoded, specialization.data))
+    {
+        error = "invalid specialization Base64 payload";
+        return false;
+    }
+
+    std::string_view mapEntries;
+    if (!ExtractArray(object, "map_entries", mapEntries))
+    {
+        error = "specialization is missing map_entries";
+        return false;
+    }
+
+    for (const auto mapText : SplitArray(mapEntries))
+    {
+        const std::string mapEntry = Trim(std::string(mapText));
+        if (mapEntry.empty())
+            continue;
+
+        VkSpecializationMapEntry entry{};
+        uint64_t value = 0;
+        if (!FindUnsigned(mapEntry, "constant_id", value))
+            return false;
+        entry.constantID = static_cast<uint32_t>(value);
+        if (!FindUnsigned(mapEntry, "offset", value))
+            return false;
+        entry.offset = static_cast<size_t>(value);
+        if (!FindUnsigned(mapEntry, "size", value))
+            return false;
+        entry.size = static_cast<size_t>(value);
+        specialization.mapEntries.push_back(entry);
+    }
+
+    return true;
+}
+
+bool ParseShaderStage(
+    std::string_view object,
+    GraphicsStageRecord& stage,
+    std::string& error)
+{
+    std::string stageName;
+    if (!FindString(object, "stage", stageName))
+        return false;
+
+    if (stageName == "vertex") stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    else if (stageName == "tessellation_control") stage.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+    else if (stageName == "tessellation_evaluation") stage.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+    else if (stageName == "geometry") stage.stage = VK_SHADER_STAGE_GEOMETRY_BIT;
+    else if (stageName == "fragment") stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    else if (stageName == "compute") stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    else if (stageName == "task") stage.stage = VK_SHADER_STAGE_TASK_BIT_EXT;
+    else if (stageName == "mesh") stage.stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+    else
+    {
+        error = "unsupported graphics shader stage";
+        return false;
+    }
+
+    uint64_t value = 0;
+    if (!FindUnsigned(object, "stage_flags", value))
+        return false;
+    stage.flags = static_cast<VkPipelineShaderStageCreateFlags>(value);
+    if (!FindHex(object, "module_hash", stage.moduleHash))
+        return false;
+    FindString(object, "entry_point", stage.entryPoint);
+
+    std::string_view specialization;
+    if (ExtractObject(object, "specialization", specialization))
+    {
+        if (!ParseSpecialization(specialization, stage.specialization, error))
+            return false;
+    }
+
+    return true;
+}
+
 bool ExtractArray(std::string_view line, std::string_view key, std::string_view& contents)
 {
     size_t start = 0;
