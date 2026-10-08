@@ -52,3 +52,8 @@ The cache blob is device/driver-specific. A replay failure must be treated as a 
     {"schema":1,"event":"pipeline_cache_snapshot","sequence":42,"size":123456,"path":"capture.jsonl.cache.42.bin"}
 
 This format is still experimental. Compute pipelines are now replayable for the subset whose descriptor layouts and pipeline layouts are fully represented and whose state does not depend on unrecorded pNext objects or immutable sampler reconstruction. The long-term graphics format still needs vertex input, input assembly, tessellation, viewport/scissor, rasterization, multisample, depth/stencil, color blend, render-pass/dynamic-rendering, and related pNext state before arbitrary graphics pipelines can be reconstructed without vendor cache files.
+
+
+### render_pass_create
+
+Legacy render-pass captures serialize attachment descriptions, subpass attachment references, preserve lists, dependencies, and a replay-compatibility flag. Unsupported pNext state marks the render pass as non-replayable rather than silently approximating it.
