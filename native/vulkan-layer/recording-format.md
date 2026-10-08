@@ -45,8 +45,10 @@ The cache blob is device/driver-specific. A replay failure must be treated as a 
 ## Example
 
     {"schema":1,"event":"shader_module_create","sequence":1,"code_words":384,"hash":"..."}
-    {"schema":1,"event":"graphics_pipeline_create","sequence":2,"count":3}
-    {"schema":1,"event":"graphics_pipeline_state","sequence":2,"count":3,"pipelines":[{"stage_hashes":["...","..."],"flags":0,"subpass":0}]}
+    {"schema":2,"event":"shader_module_code","sequence":1,"hash":"...","code_base64":"..."}
+    {"schema":2,"event":"descriptor_set_layout_create","sequence":2,"hash":"...","flags":0,"bindings":[]}
+    {"schema":2,"event":"pipeline_layout_create","sequence":3,"hash":"...","flags":0,"set_layouts":["..."],"push_constants":[]}
+    {"schema":2,"event":"compute_pipeline_state","sequence":4,"count":1,"pipelines":[{"layout_hash":"...","module_hash":"...","stage_flags":0,"stage":"compute","entry_point":"main","specialization":null,"flags":0}]}
     {"schema":1,"event":"pipeline_cache_snapshot","sequence":42,"size":123456,"path":"capture.jsonl.cache.42.bin"}
 
-This format is still experimental. The long-term portable recording format will add stable shader identifiers and, where necessary, enough Vulkan object/state information to reconstruct pipelines without depending on vendor cache files.
+This format is still experimental. Compute pipelines are now replayable for the subset whose descriptor layouts and pipeline layouts are fully represented and whose state does not depend on unrecorded pNext objects or immutable sampler reconstruction. The long-term graphics format still needs vertex input, input assembly, tessellation, viewport/scissor, rasterization, multisample, depth/stencil, color blend, render-pass/dynamic-rendering, and related pNext state before arbitrary graphics pipelines can be reconstructed without vendor cache files.
