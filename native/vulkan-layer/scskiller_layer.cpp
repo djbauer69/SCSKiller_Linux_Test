@@ -102,6 +102,84 @@ void RecordShader(const char* event, uint64_t sequence, uint64_t hash, size_t wo
     }
 }
 
+
+void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data, size_t size)
+{
+    if (!RecordingEnabled() || !data || size == 0)
+        return;
+
+    const char* base = RecordingPath();
+    if (!base)
+        return;
+
+    char path[4096]{};
+    std::snprintf(path, sizeof(path), "%s.cache.%llu.bin",
+                  base, static_cast<unsigned long long>(sequence));
+
+    if (std::FILE* file = std::fopen(path, "wb"))
+    {
+        const size_t written = std::fwrite(data, 1, size, file);
+        std::fclose(file);
+
+        if (written == size)
+        {
+            if (std::FILE* log = std::fopen(base, "ab"))
+            {
+                std::fprintf(log,
+                    "{\"schema\":1,\"event\":\"%s\",\"sequence\":%llu,\"size\":%zu,\"path\":\"%s\"}\n",
+                    event,
+                    static_cast<unsigned long long>(sequence),
+                    size,
+                    path);
+                std::fclose(log);
+            }
+        }
+    }
+}
+
+void RecordGraphicsStages(VkDevice device, uint64_t sequence,
+                          uint32_t count,
+                          const VkGraphicsPipelineCreateInfo* infos)
+{
+    if (!RecordingEnabled() || !infos)
+        return;
+
+    const char* path = RecordingPath();
+    if (!path)
+        return;
+
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(file,
+            "{\"schema\":1,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+            static_cast<unsigned long long>(sequence), count);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (i) std::fputc(',', file);
+            std::fprintf(file, "{\"stage_hashes\":[");
+            for (uint32_t s = 0; s < infos[i].stageCount; ++s)
+            {
+                if (s) std::fputc(',', file);
+                uint64_t hash = 0;
+                if (infos[i].pStages[s].module != VK_NULL_HANDLE)
+                {
+                    std::lock_guard lock(g_mutex);
+                    auto it = g_shaderHashes.find(ShaderKey{device, infos[i].pStages[s].module});
+                    if (it != g_shaderHashes.end())
+                        hash = it->second;
+                }
+                std::fprintf(file, "\"%016llx\"", static_cast<unsigned long long>(hash));
+            }
+            std::fprintf(file, "],\"flags\":%u,\"subpass\":%u}",
+                         infos[i].flags, infos[i].subpass);
+        }
+
+        std::fprintf(file, "]}\n");
+        std::fclose(file);
+    }
+}
+
 void RecordCount(const char* event, uint64_t sequence, uint32_t count)
 {
     if (!RecordingEnabled())
@@ -392,10 +470,9 @@ vkCreateGraphicsPipelines(VkDevice device,
     if (!dispatch.CreateGraphicsPipelines)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    RecordCount(
-        "graphics_pipeline_create",
-        g_sequence.fetch_add(1),
-        createInfoCount);
+    const auto sequence = g_sequence.fetch_add(1);
+    RecordCount("graphics_pipeline_create", sequence, createInfoCount);
+    RecordGraphicsStages(device, sequence, createInfoCount, createInfos);
 
     return dispatch.CreateGraphicsPipelines(
         device, pipelineCache, createInfoCount, createInfos, allocator, pipelines);
@@ -468,6 +545,71 @@ vkCreateRayTracingPipelinesKHR(VkDevice device,
         pipelines);
 }
 
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreatePipelineCache(VkDevice device,
+                      const VkPipelineCacheCreateInfo* createInfo,
+                      const VkAllocationCallbacks* allocator,
+                      VkPipelineCache* pipelineCache)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+
+    if (!dispatch.CreatePipelineCache)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkGetPipelineCacheData(VkDevice device,
+                       VkPipelineCache pipelineCache,
+                       size_t* pDataSize,
+                       void* pData)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+
+    if (!dispatch.GetPipelineCacheData)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    VkResult result = dispatch.GetPipelineCacheData(device, pipelineCache, pDataSize, pData);
+    if (result == VK_SUCCESS && pData && pDataSize && *pDataSize)
+        RecordCacheSnapshot("pipeline_cache_snapshot", g_sequence.fetch_add(1), pData, *pDataSize);
+
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyPipelineCache(VkDevice device,
+                        VkPipelineCache pipelineCache,
+                        const VkAllocationCallbacks* allocator)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return;
+        dispatch = it->second;
+    }
+
+    if (dispatch.DestroyPipelineCache)
+        dispatch.DestroyPipelineCache(device, pipelineCache, allocator);
+}
+
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetDeviceProcAddr(VkDevice device, const char* name)
 {
@@ -488,6 +630,12 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule);
     if (std::strcmp(name, "vkDestroyShaderModule") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyShaderModule);
+    if (std::strcmp(name, "vkCreatePipelineCache") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineCache);
+    if (std::strcmp(name, "vkGetPipelineCacheData") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkGetPipelineCacheData);
+    if (std::strcmp(name, "vkDestroyPipelineCache") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineCache);
 
     std::lock_guard lock(g_mutex);
     auto it = g_devices.find(device);
