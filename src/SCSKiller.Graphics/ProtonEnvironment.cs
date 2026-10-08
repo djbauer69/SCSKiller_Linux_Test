@@ -4,7 +4,8 @@ public static class ProtonEnvironment
 {
     public static IReadOnlyDictionary<string, string> Build(
         string prefix,
-        string? recordFile = null)
+        string? recordFile = null,
+        string? replayCache = null)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -14,6 +15,9 @@ public static class ProtonEnvironment
 
         if (!string.IsNullOrWhiteSpace(recordFile))
             result["SCSKILLER_VK_RECORD_FILE"] = recordFile;
+
+        if (!string.IsNullOrWhiteSpace(replayCache))
+            result["SCSKILLER_VK_REPLAY_CACHE"] = replayCache;
 
         return result;
     }
