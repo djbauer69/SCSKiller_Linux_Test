@@ -51,7 +51,7 @@ jobs:
           SCSKILLER_VK_RECORD: "1"
           SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/capture.jsonl
         run: |
-          build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
+          timeout 60s build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/capture.jsonl
           grep -q '"event":"shader_module_create"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"shader_module_code"' build/vulkan-smoke/capture.jsonl
