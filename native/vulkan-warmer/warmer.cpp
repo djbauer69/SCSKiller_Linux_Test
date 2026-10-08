@@ -1752,7 +1752,7 @@ int Run(const std::string& recordingPath,
         0,
         nullptr
     };
-    if (!inputCachePath.empty())
+    if (!inputCachePath.empty() && inputCachePath != "-")
     {
         if (!ReadBinaryFile(inputCachePath, inputCache))
             std::cerr << "Warning: could not read input cache; starting empty\\n";
