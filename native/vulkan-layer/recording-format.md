@@ -9,10 +9,13 @@ Current event types:
 - graphics_pipeline_state
 - compute_pipeline_create
 - ray_tracing_pipeline_create
+- descriptor_set_layout_create
+- pipeline_layout_create
+- compute_pipeline_state
 - pipeline_cache_snapshot
 - pipeline_cache_replay
 
-A graphics pipeline state event records the shader-module hashes referenced by each pipeline, plus the pipeline flags and subpass. This is intentionally lightweight: it does not claim to be a complete Vulkan pipeline reconstruction format.
+A graphics pipeline state event records the shader-module hashes, specialization fingerprints, pipeline-layout hash, flags, and subpass. Compute pipeline state records the compute shader hash, specialization fingerprint, pipeline-layout hash, and flags. Descriptor-set and pipeline-layout events establish stable capture-time identities for replay. This is still an incremental reconstruction format: immutable sampler state and the broader graphics state block are not yet fully serialized.
 
 ## Driver-owned pipeline cache snapshots
 
