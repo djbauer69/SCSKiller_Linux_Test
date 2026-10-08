@@ -9,6 +9,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
+    Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path]  Replay recorded compute pipelines through Vulkan");
     return;
 }
 
@@ -58,6 +59,43 @@ switch (args[0])
 
         Console.WriteLine($"Proton warmer exit code: {result.ExitCode}");
         Environment.ExitCode = result.ExitCode;
+        break;
+
+    case "warm-vulkan" when args.Length >= 2:
+        var capture = args[1];
+        string? inputCache = null;
+        string? outputCache = null;
+        var nativeWarmer = Path.Combine(AppContext.BaseDirectory, "scskiller-vulkan-warmer");
+
+        for (var i = 2; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--input-cache" when i + 1 < args.Length:
+                    inputCache = args[++i];
+                    break;
+                case "--output-cache" when i + 1 < args.Length:
+                    outputCache = args[++i];
+                    break;
+                case "--warmer" when i + 1 < args.Length:
+                    nativeWarmer = args[++i];
+                    break;
+                default:
+                    Console.Error.WriteLine($"Unknown warm-vulkan option: {args[i]}");
+                    Environment.ExitCode = 2;
+                    return;
+            }
+        }
+
+        var warmResult = await VulkanWarmer.RunAsync(
+            new VulkanWarmOptions(nativeWarmer, capture, inputCache, outputCache));
+
+        Console.Write(warmResult.StandardOutput);
+        if (!string.IsNullOrEmpty(warmResult.StandardError))
+            Console.Error.Write(warmResult.StandardError);
+
+        Console.WriteLine($"Vulkan warmer exit code: {warmResult.ExitCode}");
+        Environment.ExitCode = warmResult.ExitCode;
         break;
 
     case "record-info":
