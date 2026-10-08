@@ -9,7 +9,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
-    Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path]  Replay recorded compute pipelines through Vulkan");
+    Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path]  Replay recorded Vulkan pipelines through the driver");
     return;
 }
 
