@@ -125,7 +125,7 @@ struct RenderPassKeyHash
     size_t operator()(const RenderPassKey& key) const noexcept
     {
         const auto deviceBits = reinterpret_cast<uintptr_t>(key.device);
-        const auto renderPassBits = static_cast<uint64_t>(key.renderPass);
+        const auto renderPassBits = reinterpret_cast<uintptr_t>(key.renderPass);
         return static_cast<size_t>(
             (deviceBits >> 4) ^
             (renderPassBits + 0x243f6a8885a308d3ull + (deviceBits << 6) + (deviceBits >> 2)));
