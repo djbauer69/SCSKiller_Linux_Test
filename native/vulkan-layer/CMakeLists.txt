@@ -23,3 +23,7 @@ set_target_properties(VK_LAYER_SCSKILLER PROPERTIES
 
 install(TARGETS VK_LAYER_SCSKILLER LIBRARY DESTINATION lib)
 install(FILES layer.json DESTINATION share/vulkan/explicit_layer.d)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_options(VK_LAYER_SCSKILLER PRIVATE "-Wl,-Bsymbolic-functions")
+endif()
