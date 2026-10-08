@@ -112,3 +112,10 @@ jobs:
             - \
             build/vulkan-smoke/warmed.cache.bin
           test -s build/vulkan-smoke/warmed.cache.bin
+      - name: Replay captured graphics pipeline with Vulkan warmer
+        run: |
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/graphics-capture.jsonl \
+            - \
+            build/vulkan-smoke/graphics-warmed.cache.bin
+          test -s build/vulkan-smoke/graphics-warmed.cache.bin
