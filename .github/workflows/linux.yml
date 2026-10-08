@@ -61,5 +61,8 @@ jobs:
           grep -q '"event":"pipeline_cache_snapshot"' build/vulkan-smoke/capture.jsonl
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
-          build/vulkan-warmer/scskiller-vulkan-warmer             build/vulkan-smoke/capture.jsonl             build/vulkan-smoke/warmed.cache.bin
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/capture.jsonl \
+            - \
+            build/vulkan-smoke/warmed.cache.bin
           test -s build/vulkan-smoke/warmed.cache.bin
