@@ -40,10 +40,21 @@ Graphics pipeline replay remains deliberately gated on fuller fixed-function and
 
 ## Capturing a Proton game
 
-The managed Linux CLI can launch a Windows game through Proton with the SCSKiller Vulkan layer enabled:
+The managed Linux CLI can launch native Vulkan applications or Windows games through Proton with the SCSKiller Vulkan layer enabled:
 
     scskiller-linux record-proton <proton> <compatdata> <workdir> <game-exe> <layer-directory> <capture.jsonl> [game arguments...]
 
 The recorder sets STEAM_COMPAT_DATA_PATH, enables VK_LAYER_SCSKILLER through VK_INSTANCE_LAYERS, prepends the supplied layer directory to VK_LAYER_PATH, and writes SCSKILLER_VK_RECORD_FILE to the requested capture. This works at the common Vulkan runtime boundary, so D3D9-11 through DXVK and D3D12 through vkd3d-proton can be captured by the same layer.
 
 The capture remains diagnostic: unsupported Vulkan extension pNext state is marked as non-replayable rather than guessed.
+
+
+For a native Vulkan executable:
+
+    scskiller-linux record-vulkan <executable> <workdir> <layer-directory> <capture.jsonl> [arguments...]
+
+For a Proton game:
+
+    scskiller-linux record-proton <proton> <compatdata> <workdir> <game-exe> <layer-directory> <capture.jsonl> [game arguments...]
+
+Both commands enable VK_LAYER_SCSKILLER and record at the common Vulkan boundary. This keeps native Vulkan, DXVK, and vkd3d-proton capture on the same recording format and replay path.
