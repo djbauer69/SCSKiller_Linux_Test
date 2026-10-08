@@ -143,7 +143,8 @@ jobs:
           SCSKILLER_VK_REPLAY_CACHE: ${{ github.workspace }}/build/vulkan-smoke/warmed.cache.bin
           SCSKILLER_VK_RECORD: "1"
           SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/cache-replay-capture.jsonl
-        run: |          rm -f build/vulkan-smoke/cache-replay-capture.jsonl
+        run: |
+          rm -f build/vulkan-smoke/cache-replay-capture.jsonl
 
           timeout 60s build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/cache-replay-capture.jsonl
