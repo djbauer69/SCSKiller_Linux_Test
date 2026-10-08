@@ -159,6 +159,8 @@ jobs:
             --warmer ${{ github.workspace }}/build/vulkan-warmer/scskiller-vulkan-warmer
           test -s build/vulkan-smoke/managed-warmed.cache.bin
       - name: Exercise native Vulkan recording through the managed CLI
+        env:
+          NODEVICE_SELECT: "1"
         run: |
           timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             record-vulkan build/vulkan-probe/scskiller-vulkan-probe \
