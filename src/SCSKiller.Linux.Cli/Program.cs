@@ -8,6 +8,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  path <vulkan|d3d12|d3d11|d3d10|d3d9|d3d8>  Show the Linux graphics path");
     Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
+    Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
     return;
 }
 
@@ -32,6 +33,31 @@ switch (args[0])
         Console.WriteLine($"Proton executable/path: {runtime.ProtonExecutable ?? "<not set>"}");
         Console.WriteLine($"DXVK path: {runtime.DxvkPath ?? "<not set>"}");
         Console.WriteLine($"vkd3d-proton path: {runtime.Vkd3dPath ?? "<not set>"}");
+        break;
+
+    case "warm-proton" when args.Length >= 5:
+        var proton = args[1];
+        var prefix = args[2];
+        var workdir = args[3];
+        var gameExe = args[4];
+        var warmer = args.Length >= 6 ? args[5] : Path.Combine(AppContext.BaseDirectory, "scskiller_warm.exe");
+        var threads = 0;
+
+        for (var i = 6; i + 1 < args.Length; i++)
+        {
+            if (args[i] == "--threads" && int.TryParse(args[++i], out var parsed))
+                threads = parsed;
+        }
+
+        var result = await ProtonWarmer.RunAsync(
+            new ProtonWarmOptions(proton, prefix, workdir, gameExe, warmer, threads));
+
+        Console.Write(result.StandardOutput);
+        if (!string.IsNullOrEmpty(result.StandardError))
+            Console.Error.Write(result.StandardError);
+
+        Console.WriteLine($"Proton warmer exit code: {result.ExitCode}");
+        Environment.ExitCode = result.ExitCode;
         break;
 
     case "record-info":
