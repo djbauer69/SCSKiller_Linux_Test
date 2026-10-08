@@ -6,6 +6,7 @@
     <Project Path="src/SCSKiller.Cli/SCSKiller.Cli.csproj" />
     <Project Path="src/SCSKiller.Core/SCSKiller.Core.csproj" />
     <Project Path="src/SCSKiller.Graphics/SCSKiller.Graphics.csproj" />
+    <Project Path="src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SCSKiller.Tests/SCSKiller.Tests.csproj" />
