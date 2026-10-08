@@ -1,0 +1,1068 @@
+#include <vulkan/vulkan.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+namespace
+{
+struct ShaderRecord
+{
+    std::vector<uint32_t> words;
+};
+
+struct DescriptorBindingRecord
+{
+    uint32_t binding = 0;
+    VkDescriptorType descriptorType = VK_DESCRIPTOR_TYPE_MAX_ENUM;
+    uint32_t descriptorCount = 0;
+    VkShaderStageFlags stageFlags = 0;
+    uint32_t immutableSamplerCount = 0;
+};
+
+struct DescriptorLayoutRecord
+{
+    VkDescriptorSetLayoutCreateFlags flags = 0;
+    std::vector<DescriptorBindingRecord> bindings;
+};
+
+struct PushConstantRecord
+{
+    VkShaderStageFlags stageFlags = 0;
+    uint32_t offset = 0;
+    uint32_t size = 0;
+};
+
+struct PipelineLayoutRecord
+{
+    VkPipelineLayoutCreateFlags flags = 0;
+    std::vector<uint64_t> setLayoutHashes;
+    std::vector<PushConstantRecord> pushConstants;
+};
+
+struct SpecializationRecord
+{
+    bool present = false;
+    std::vector<VkSpecializationMapEntry> mapEntries;
+    std::vector<uint8_t> data;
+};
+
+struct ComputePipelineRecord
+{
+    uint64_t layoutHash = 0;
+    uint64_t moduleHash = 0;
+    VkPipelineCreateFlags flags = 0;
+    VkPipelineShaderStageCreateFlags stageFlags = 0;
+    std::string entryPoint = "main";
+    SpecializationRecord specialization;
+};
+
+struct Recording
+{
+    std::unordered_map<uint64_t, ShaderRecord> shaders;
+    std::unordered_map<uint64_t, DescriptorLayoutRecord> descriptorLayouts;
+    std::unordered_map<uint64_t, PipelineLayoutRecord> pipelineLayouts;
+    std::vector<ComputePipelineRecord> computePipelines;
+    size_t graphicsPipelines = 0;
+    size_t rayTracingPipelines = 0;
+};
+
+struct VkContext
+{
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+    VkPipelineCache cache = VK_NULL_HANDLE;
+};
+
+std::string Trim(std::string value)
+{
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+        value.erase(value.begin());
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+        value.pop_back();
+    return value;
+}
+
+bool FindToken(std::string_view line, std::string_view key, size_t& valueStart)
+{
+    const std::string needle = "\"" + std::string(key) + "\":";
+    const size_t keyPos = line.find(needle);
+    if (keyPos == std::string_view::npos)
+        return false;
+
+    valueStart = keyPos + needle.size();
+    while (valueStart < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[valueStart])))
+    {
+        ++valueStart;
+    }
+    return valueStart < line.size();
+}
+
+bool FindString(std::string_view line, std::string_view key, std::string& value)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start) || line[start] != '"')
+        return false;
+
+    ++start;
+    std::string result;
+    bool escaped = false;
+    for (size_t i = start; i < line.size(); ++i)
+    {
+        const char c = line[i];
+        if (escaped)
+        {
+            switch (c)
+            {
+            case '"': result.push_back('"'); break;
+            case '\\': result.push_back('\\'); break;
+            case '/': result.push_back('/'); break;
+            case 'n': result.push_back('\n'); break;
+            case 'r': result.push_back('\r'); break;
+            case 't': result.push_back('\t'); break;
+            default: result.push_back(c); break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (c == '\\')
+        {
+            escaped = true;
+            continue;
+        }
+        if (c == '"')
+        {
+            value = std::move(result);
+            return true;
+        }
+        result.push_back(c);
+    }
+    return false;
+}
+
+bool FindUnsigned(std::string_view line, std::string_view key, uint64_t& value)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start))
+        return false;
+
+    size_t end = start;
+    while (end < line.size() && std::isdigit(static_cast<unsigned char>(line[end])))
+        ++end;
+    if (end == start)
+        return false;
+
+    try
+    {
+        value = std::stoull(std::string(line.substr(start, end - start)));
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool FindHex(std::string_view line, std::string_view key, uint64_t& value)
+{
+    std::string text;
+    if (!FindString(line, key, text) || text.empty())
+        return false;
+
+    try
+    {
+        value = std::stoull(text, nullptr, 16);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool ExtractArray(std::string_view line, std::string_view key, std::string_view& contents)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start) || line[start] != '[')
+        return false;
+
+    const size_t contentStart = start + 1;
+    int depth = 1;
+    bool quoted = false;
+    bool escaped = false;
+    for (size_t i = contentStart; i < line.size(); ++i)
+    {
+        const char c = line[i];
+        if (quoted)
+        {
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == '"')
+                quoted = false;
+            continue;
+        }
+
+        if (c == '"')
+        {
+            quoted = true;
+            continue;
+        }
+        if (c == '[')
+            ++depth;
+        else if (c == ']')
+        {
+            --depth;
+            if (depth == 0)
+            {
+                contents = line.substr(contentStart, i - contentStart);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool ExtractObject(std::string_view line, std::string_view key, std::string_view& contents)
+{
+    size_t start = 0;
+    if (!FindToken(line, key, start) || line[start] != '{')
+        return false;
+
+    const size_t contentStart = start + 1;
+    int depth = 1;
+    bool quoted = false;
+    bool escaped = false;
+    for (size_t i = contentStart; i < line.size(); ++i)
+    {
+        const char c = line[i];
+        if (quoted)
+        {
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == '"')
+                quoted = false;
+            continue;
+        }
+
+        if (c == '"')
+            quoted = true;
+        else if (c == '{')
+            ++depth;
+        else if (c == '}')
+        {
+            --depth;
+            if (depth == 0)
+            {
+                contents = line.substr(contentStart, i - contentStart);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::vector<std::string_view> SplitArray(std::string_view contents)
+{
+    std::vector<std::string_view> parts;
+    size_t start = 0;
+    int objectDepth = 0;
+    int arrayDepth = 0;
+    bool quoted = false;
+    bool escaped = false;
+
+    for (size_t i = 0; i < contents.size(); ++i)
+    {
+        const char c = contents[i];
+        if (quoted)
+        {
+            if (escaped)
+                escaped = false;
+            else if (c == '\\')
+                escaped = true;
+            else if (c == '"')
+                quoted = false;
+            continue;
+        }
+
+        if (c == '"')
+            quoted = true;
+        else if (c == '{')
+            ++objectDepth;
+        else if (c == '}')
+            --objectDepth;
+        else if (c == '[')
+            ++arrayDepth;
+        else if (c == ']')
+            --arrayDepth;
+        else if (c == ',' && objectDepth == 0 && arrayDepth == 0)
+        {
+            parts.push_back(contents.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+
+    if (start < contents.size())
+        parts.push_back(contents.substr(start));
+
+    return parts;
+}
+
+bool DecodeBase64(std::string_view encoded, std::vector<uint8_t>& output)
+{
+    auto value = [](char c) -> int
+    {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+
+    uint32_t accumulator = 0;
+    int bits = 0;
+    output.clear();
+
+    for (const char c : encoded)
+    {
+        if (c == '=')
+            break;
+
+        const int decoded = value(c);
+        if (decoded < 0)
+            continue;
+
+        accumulator = (accumulator << 6) | static_cast<uint32_t>(decoded);
+        bits += 6;
+        if (bits >= 8)
+        {
+            bits -= 8;
+            output.push_back(static_cast<uint8_t>((accumulator >> bits) & 0xff));
+        }
+    }
+
+    return !encoded.empty() && !output.empty();
+}
+
+bool ParseRecording(const std::string& path, Recording& recording, std::string& error)
+{
+    std::ifstream input(path);
+    if (!input)
+    {
+        error = "could not open recording";
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (line.empty())
+            continue;
+
+        std::string event;
+        if (!FindString(line, "event", event))
+            continue;
+
+        uint64_t hash = 0;
+        if (event == "shader_module_code")
+        {
+            if (!FindHex(line, "hash", hash))
+                continue;
+
+            std::string encoded;
+            if (!FindString(line, "code_base64", encoded))
+            {
+                error = "shader_module_code is missing code_base64";
+                return false;
+            }
+
+            std::vector<uint8_t> bytes;
+            if (!DecodeBase64(encoded, bytes) ||
+                bytes.size() % sizeof(uint32_t) != 0)
+            {
+                error = "invalid Base64 SPIR-V payload";
+                return false;
+            }
+
+            ShaderRecord shader;
+            shader.words.resize(bytes.size() / sizeof(uint32_t));
+            std::copy(bytes.begin(), bytes.end(),
+                      reinterpret_cast<uint8_t*>(shader.words.data()));
+            if (shader.words.empty() || shader.words[0] != 0x07230203u)
+            {
+                error = "recorded shader does not have a valid SPIR-V magic";
+                return false;
+            }
+            recording.shaders[hash] = std::move(shader);
+            continue;
+        }
+
+        if (event == "descriptor_set_layout_create")
+        {
+            if (!FindHex(line, "hash", hash))
+                continue;
+
+            DescriptorLayoutRecord record;
+            uint64_t flags = 0;
+            FindUnsigned(line, "flags", flags);
+            record.flags = static_cast<VkDescriptorSetLayoutCreateFlags>(flags);
+
+            std::string_view bindings;
+            if (!ExtractArray(line, "bindings", bindings))
+            {
+                error = "descriptor_set_layout_create is missing bindings";
+                return false;
+            }
+
+            for (const auto entryText : SplitArray(bindings))
+            {
+                const std::string entry = Trim(std::string(entryText));
+                if (entry.empty())
+                    continue;
+
+                DescriptorBindingRecord binding;
+                uint64_t value = 0;
+                if (!FindUnsigned(entry, "binding", value))
+                    return false;
+                binding.binding = static_cast<uint32_t>(value);
+                if (!FindUnsigned(entry, "descriptor_type", value))
+                    return false;
+                binding.descriptorType = static_cast<VkDescriptorType>(value);
+                if (!FindUnsigned(entry, "descriptor_count", value))
+                    return false;
+                binding.descriptorCount = static_cast<uint32_t>(value);
+                if (!FindUnsigned(entry, "stage_flags", value))
+                    return false;
+                binding.stageFlags = static_cast<VkShaderStageFlags>(value);
+                if (!FindUnsigned(entry, "immutable_sampler_count", value))
+                    return false;
+                binding.immutableSamplerCount = static_cast<uint32_t>(value);
+                record.bindings.push_back(binding);
+            }
+
+            recording.descriptorLayouts[hash] = std::move(record);
+            continue;
+        }
+
+        if (event == "pipeline_layout_create")
+        {
+            if (!FindHex(line, "hash", hash))
+                continue;
+
+            PipelineLayoutRecord record;
+            uint64_t value = 0;
+            FindUnsigned(line, "flags", value);
+            record.flags = static_cast<VkPipelineLayoutCreateFlags>(value);
+
+            std::string_view setLayouts;
+            if (!ExtractArray(line, "set_layouts", setLayouts))
+            {
+                error = "pipeline_layout_create is missing set_layouts";
+                return false;
+            }
+            for (const auto valueText : SplitArray(setLayouts))
+            {
+                const std::string item = Trim(std::string(valueText));
+                if (item.empty())
+                    continue;
+                try
+                {
+                    std::string normalized = item;
+                    if (normalized.size() >= 2 && normalized.front() == '"' && normalized.back() == '"')
+                        normalized = normalized.substr(1, normalized.size() - 2);
+                    record.setLayoutHashes.push_back(std::stoull(normalized, nullptr, 16));
+                }
+                catch (...)
+                {
+                    error = "invalid descriptor layout hash";
+                    return false;
+                }
+            }
+
+            std::string_view pushConstants;
+            if (!ExtractArray(line, "push_constants", pushConstants))
+            {
+                error = "pipeline_layout_create is missing push_constants";
+                return false;
+            }
+            for (const auto valueText : SplitArray(pushConstants))
+            {
+                const std::string entry = Trim(std::string(valueText));
+                if (entry.empty())
+                    continue;
+
+                PushConstantRecord range;
+                if (!FindUnsigned(entry, "stage_flags", value))
+                    return false;
+                range.stageFlags = static_cast<VkShaderStageFlags>(value);
+                if (!FindUnsigned(entry, "offset", value))
+                    return false;
+                range.offset = static_cast<uint32_t>(value);
+                if (!FindUnsigned(entry, "size", value))
+                    return false;
+                range.size = static_cast<uint32_t>(value);
+                record.pushConstants.push_back(range);
+            }
+
+            recording.pipelineLayouts[hash] = std::move(record);
+            continue;
+        }
+
+        if (event == "compute_pipeline_state")
+        {
+            std::string_view pipelines;
+            if (!ExtractArray(line, "pipelines", pipelines))
+            {
+                error = "compute_pipeline_state is missing pipelines";
+                return false;
+            }
+
+            for (const auto valueText : SplitArray(pipelines))
+            {
+                const std::string entry = Trim(std::string(valueText));
+                if (entry.empty())
+                    continue;
+
+                ComputePipelineRecord pipeline;
+                uint64_t value = 0;
+                if (!FindHex(entry, "layout_hash", pipeline.layoutHash))
+                    return false;
+                if (!FindHex(entry, "module_hash", pipeline.moduleHash))
+                    return false;
+                if (!FindUnsigned(entry, "flags", value))
+                    return false;
+                pipeline.flags = static_cast<VkPipelineCreateFlags>(value);
+                if (FindUnsigned(entry, "stage_flags", value))
+                    pipeline.stageFlags = static_cast<VkPipelineShaderStageCreateFlags>(value);
+                FindString(entry, "entry_point", pipeline.entryPoint);
+
+                std::string_view specialization;
+                if (ExtractObject(entry, "specialization", specialization))
+                {
+                    pipeline.specialization.present = true;
+                    std::string encoded;
+                    FindString(specialization, "data_base64", encoded);
+                    if (!encoded.empty() &&
+                        !DecodeBase64(encoded, pipeline.specialization.data))
+                    {
+                        error = "invalid specialization Base64 payload";
+                        return false;
+                    }
+
+                    std::string_view mapEntries;
+                    if (!ExtractArray(specialization, "map_entries", mapEntries))
+                    {
+                        error = "specialization is missing map_entries";
+                        return false;
+                    }
+
+                    for (const auto mapText : SplitArray(mapEntries))
+                    {
+                        const std::string mapEntry = Trim(std::string(mapText));
+                        if (mapEntry.empty())
+                            continue;
+
+                        VkSpecializationMapEntry map{};
+                        if (!FindUnsigned(mapEntry, "constant_id", value))
+                            return false;
+                        map.constantID = static_cast<uint32_t>(value);
+                        if (!FindUnsigned(mapEntry, "offset", value))
+                            return false;
+                        map.offset = static_cast<size_t>(value);
+                        if (!FindUnsigned(mapEntry, "size", value))
+                            return false;
+                        map.size = static_cast<size_t>(value);
+                        pipeline.specialization.mapEntries.push_back(map);
+                    }
+                }
+
+                recording.computePipelines.push_back(std::move(pipeline));
+            }
+            continue;
+        }
+
+        if (event == "graphics_pipeline_state")
+        {
+            uint64_t count = 0;
+            if (FindUnsigned(line, "count", count))
+                recording.graphicsPipelines += static_cast<size_t>(count);
+            continue;
+        }
+
+        if (event == "ray_tracing_pipeline_create")
+        {
+            uint64_t count = 0;
+            if (FindUnsigned(line, "count", count))
+                recording.rayTracingPipelines += static_cast<size_t>(count);
+        }
+    }
+
+    return true;
+}
+
+bool Check(VkResult result, const char* operation)
+{
+    if (result != VK_SUCCESS)
+    {
+        std::cerr << operation << " failed: " << result << "\\n";
+        return false;
+    }
+    return true;
+}
+
+bool ReadBinaryFile(const std::string& path, std::vector<uint8_t>& data)
+{
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+        return false;
+
+    const std::streamsize size = file.tellg();
+    if (size <= 0)
+        return false;
+
+    file.seekg(0, std::ios::beg);
+    data.resize(static_cast<size_t>(size));
+    return file.read(reinterpret_cast<char*>(data.data()), size).good();
+}
+
+bool WriteBinaryFile(const std::string& path, const void* data, size_t size)
+{
+    std::ofstream file(path, std::ios::binary);
+    if (!file)
+        return false;
+
+    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return file.good();
+}
+
+void DestroyContext(VkContext& context,
+                    std::unordered_map<uint64_t, VkDescriptorSetLayout>& descriptorLayouts,
+                    std::unordered_map<uint64_t, VkPipelineLayout>& pipelineLayouts,
+                    std::unordered_map<uint64_t, VkShaderModule>& shaderModules)
+{
+    for (const auto& [hash, pipelineLayout] : pipelineLayouts)
+        vkDestroyPipelineLayout(context.device, pipelineLayout, nullptr);
+    for (const auto& [hash, descriptorLayout] : descriptorLayouts)
+        vkDestroyDescriptorSetLayout(context.device, descriptorLayout, nullptr);
+    for (const auto& [hash, shaderModule] : shaderModules)
+        vkDestroyShaderModule(context.device, shaderModule, nullptr);
+
+    if (context.cache && context.device)
+        vkDestroyPipelineCache(context.device, context.cache, nullptr);
+    if (context.device)
+        vkDestroyDevice(context.device, nullptr);
+    if (context.instance)
+        vkDestroyInstance(context.instance, nullptr);
+
+    context = {};
+}
+
+void DestroyContext(VkContext& context)
+{
+    if (context.cache && context.device)
+        vkDestroyPipelineCache(context.device, context.cache, nullptr);
+    if (context.device)
+        vkDestroyDevice(context.device, nullptr);
+    if (context.instance)
+        vkDestroyInstance(context.instance, nullptr);
+    context = {};
+}
+
+int Run(const std::string& recordingPath,
+        const std::string& inputCachePath,
+        const std::string& outputCachePath)
+{
+    Recording recording;
+    std::string error;
+    if (!ParseRecording(recordingPath, recording, error))
+    {
+        std::cerr << "Recording parse failed: " << error << "\\n";
+        return 1;
+    }
+
+    std::cout << "Shaders: " << recording.shaders.size()
+              << ", descriptor layouts: " << recording.descriptorLayouts.size()
+              << ", pipeline layouts: " << recording.pipelineLayouts.size()
+              << ", compute pipelines: " << recording.computePipelines.size()
+              << ", graphics pipelines skipped: " << recording.graphicsPipelines
+              << ", ray-tracing pipelines skipped: " << recording.rayTracingPipelines << "\\n";
+
+    VkContext context;
+    VkApplicationInfo app{
+        VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        nullptr,
+        "SCSKiller Vulkan Warmer",
+        VK_MAKE_VERSION(1, 0, 0),
+        "SCSKiller",
+        VK_MAKE_VERSION(1, 0, 0),
+        VK_API_VERSION_1_0
+    };
+    VkInstanceCreateInfo instanceInfo{
+        VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        nullptr,
+        0,
+        &app,
+        0,
+        nullptr,
+        0,
+        nullptr
+    };
+    if (!Check(vkCreateInstance(&instanceInfo, nullptr, &context.instance), "vkCreateInstance"))
+        return 1;
+
+    uint32_t deviceCount = 0;
+    if (!Check(vkEnumeratePhysicalDevices(context.instance, &deviceCount, nullptr),
+               "vkEnumeratePhysicalDevices(count)") || deviceCount == 0)
+    {
+        std::cerr << "No Vulkan physical devices available\\n";
+        DestroyContext(context);
+        return 1;
+    }
+
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    if (!Check(vkEnumeratePhysicalDevices(context.instance, &deviceCount, devices.data()),
+               "vkEnumeratePhysicalDevices"))
+    {
+        DestroyContext(context);
+        return 1;
+    }
+    context.physicalDevice = devices[0];
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(context.physicalDevice, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queues(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        context.physicalDevice, &queueFamilyCount, queues.data());
+
+    uint32_t queueFamily = VK_QUEUE_FAMILY_IGNORED;
+    for (uint32_t i = 0; i < queueFamilyCount; ++i)
+    {
+        if (queues[i].queueCount > 0 &&
+            (queues[i].queueFlags & (VK_QUEUE_COMPUTE_BIT | VK_QUEUE_GRAPHICS_BIT)))
+        {
+            queueFamily = i;
+            break;
+        }
+    }
+    if (queueFamily == VK_QUEUE_FAMILY_IGNORED)
+    {
+        std::cerr << "No graphics/compute queue family available\\n";
+        DestroyContext(context);
+        return 1;
+    }
+
+    const float priority = 1.0f;
+    VkDeviceQueueCreateInfo queueInfo{
+        VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        nullptr,
+        0,
+        queueFamily,
+        1,
+        &priority
+    };
+    VkDeviceCreateInfo deviceInfo{
+        VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        nullptr,
+        0,
+        1,
+        &queueInfo,
+        0,
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    };
+    if (!Check(vkCreateDevice(context.physicalDevice, &deviceInfo, nullptr, &context.device),
+               "vkCreateDevice"))
+    {
+        DestroyContext(context);
+        return 1;
+    }
+
+    std::vector<uint8_t> inputCache;
+    VkPipelineCacheCreateInfo cacheInfo{
+        VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        nullptr,
+        0,
+        0,
+        nullptr
+    };
+    if (!inputCachePath.empty())
+    {
+        if (!ReadBinaryFile(inputCachePath, inputCache))
+            std::cerr << "Warning: could not read input cache; starting empty\\n";
+        else
+        {
+            cacheInfo.initialDataSize = inputCache.size();
+            cacheInfo.pInitialData = inputCache.data();
+        }
+    }
+
+    VkResult cacheResult = vkCreatePipelineCache(
+        context.device, &cacheInfo, nullptr, &context.cache);
+    if (cacheResult == VK_ERROR_INVALID_PIPELINE_CACHE_DATA &&
+        cacheInfo.initialDataSize != 0)
+    {
+        std::cerr << "Warning: input pipeline cache was rejected by this device; starting empty\\n";
+        cacheInfo.initialDataSize = 0;
+        cacheInfo.pInitialData = nullptr;
+        cacheResult = vkCreatePipelineCache(
+            context.device, &cacheInfo, nullptr, &context.cache);
+    }
+    if (!Check(cacheResult, "vkCreatePipelineCache"))
+    {
+        DestroyContext(context);
+        return 1;
+    }
+
+    std::unordered_map<uint64_t, VkDescriptorSetLayout> descriptorLayouts;
+    std::unordered_map<uint64_t, VkPipelineLayout> pipelineLayouts;
+    std::unordered_map<uint64_t, VkShaderModule> shaderModules;
+
+    for (const auto& [hash, record] : recording.descriptorLayouts)
+    {
+        bool unsupported = false;
+        std::vector<VkDescriptorSetLayoutBinding> bindings;
+        bindings.reserve(record.bindings.size());
+        for (const auto& binding : record.bindings)
+        {
+            if (binding.immutableSamplerCount != 0)
+            {
+                unsupported = true;
+                break;
+            }
+
+            bindings.push_back(VkDescriptorSetLayoutBinding{
+                binding.binding,
+                binding.descriptorType,
+                binding.descriptorCount,
+                binding.stageFlags,
+                nullptr
+            });
+        }
+
+        if (unsupported)
+        {
+            std::cerr << "Skipping descriptor layout " << std::hex << hash << std::dec
+                      << ": immutable samplers are not yet reconstructible\\n";
+            continue;
+        }
+
+        VkDescriptorSetLayoutCreateInfo info{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            nullptr,
+            record.flags,
+            static_cast<uint32_t>(bindings.size()),
+            bindings.data()
+        };
+        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+        if (!Check(vkCreateDescriptorSetLayout(
+                       context.device, &info, nullptr, &layout),
+                   "vkCreateDescriptorSetLayout"))
+        {
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            return 1;
+        }
+        descriptorLayouts.emplace(hash, layout);
+    }
+
+    for (const auto& [hash, record] : recording.pipelineLayouts)
+    {
+        std::vector<VkDescriptorSetLayout> setLayouts;
+        bool unsupported = false;
+        for (const uint64_t setHash : record.setLayoutHashes)
+        {
+            const auto it = descriptorLayouts.find(setHash);
+            if (it == descriptorLayouts.end())
+            {
+                unsupported = true;
+                break;
+            }
+            setLayouts.push_back(it->second);
+        }
+
+        if (unsupported)
+        {
+            std::cerr << "Skipping pipeline layout " << std::hex << hash << std::dec
+                      << ": referenced descriptor layout is not reconstructible\\n";
+            continue;
+        }
+
+        std::vector<VkPushConstantRange> pushConstants;
+        pushConstants.reserve(record.pushConstants.size());
+        for (const auto& range : record.pushConstants)
+        {
+            pushConstants.push_back(VkPushConstantRange{
+                range.stageFlags,
+                range.offset,
+                range.size
+            });
+        }
+
+        VkPipelineLayoutCreateInfo info{
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            nullptr,
+            record.flags,
+            static_cast<uint32_t>(setLayouts.size()),
+            setLayouts.data(),
+            static_cast<uint32_t>(pushConstants.size()),
+            pushConstants.data()
+        };
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        if (!Check(vkCreatePipelineLayout(
+                       context.device, &info, nullptr, &layout),
+                   "vkCreatePipelineLayout"))
+        {
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            return 1;
+        }
+        pipelineLayouts.emplace(hash, layout);
+    }
+
+    for (const auto& [hash, record] : recording.shaders)
+    {
+        VkShaderModuleCreateInfo info{
+            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            nullptr,
+            0,
+            record.words.size() * sizeof(uint32_t),
+            record.words.data()
+        };
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!Check(vkCreateShaderModule(
+                       context.device, &info, nullptr, &module),
+                   "vkCreateShaderModule"))
+        {
+            DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+            return 1;
+        }
+        shaderModules.emplace(hash, module);
+    }
+
+    size_t succeeded = 0;
+    size_t skipped = 0;
+    size_t failed = 0;
+
+    for (const auto& record : recording.computePipelines)
+    {
+        const auto layoutIt = pipelineLayouts.find(record.layoutHash);
+        const auto shaderIt = shaderModules.find(record.moduleHash);
+        if (layoutIt == pipelineLayouts.end() || shaderIt == shaderModules.end())
+        {
+            ++skipped;
+            std::cerr << "Skipping compute pipeline: missing reconstructible layout or shader "
+                      << std::hex << record.moduleHash << std::dec << "\\n";
+            continue;
+        }
+
+        VkSpecializationInfo specializationInfo{};
+        if (record.specialization.present)
+        {
+            specializationInfo.mapEntryCount =
+                static_cast<uint32_t>(record.specialization.mapEntries.size());
+            specializationInfo.pMapEntries = record.specialization.mapEntries.data();
+            specializationInfo.dataSize = record.specialization.data.size();
+            specializationInfo.pData = record.specialization.data.data();
+        }
+
+        VkPipelineShaderStageCreateInfo stage{
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            nullptr,
+            record.stageFlags,
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            shaderIt->second,
+            record.entryPoint.c_str(),
+            record.specialization.present ? &specializationInfo : nullptr
+        };
+        VkComputePipelineCreateInfo info{
+            VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            nullptr,
+            record.flags,
+            stage,
+            layoutIt->second,
+            VK_NULL_HANDLE,
+            -1
+        };
+
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        const VkResult result = vkCreateComputePipelines(
+            context.device, context.cache, 1, &info, nullptr, &pipeline);
+        if (result == VK_SUCCESS)
+        {
+            ++succeeded;
+            vkDestroyPipeline(context.device, pipeline, nullptr);
+        }
+        else
+        {
+            ++failed;
+            std::cerr << "Compute pipeline replay failed: " << result << "\\n";
+        }
+    }
+
+    size_t cacheSize = 0;
+    std::vector<uint8_t> outputCache;
+    if (Check(vkGetPipelineCacheData(
+                  context.device, context.cache, &cacheSize, nullptr),
+              "vkGetPipelineCacheData(size)") && cacheSize > 0)
+    {
+        outputCache.resize(cacheSize);
+        if (!Check(vkGetPipelineCacheData(
+                       context.device, context.cache, &cacheSize, outputCache.data()),
+                   "vkGetPipelineCacheData(data)"))
+        {
+            outputCache.clear();
+        }
+    }
+
+    if (!outputCachePath.empty() && !outputCache.empty())
+    {
+        if (!WriteBinaryFile(
+                outputCachePath, outputCache.data(), outputCache.size()))
+        {
+            std::cerr << "Could not write output pipeline cache: "
+                      << outputCachePath << "\\n";
+            ++failed;
+        }
+        else
+        {
+            std::cout << "Wrote pipeline cache: " << outputCachePath
+                      << " (" << outputCache.size() << " bytes)\\n";
+        }
+    }
+
+    const size_t total = recording.computePipelines.size();
+    std::cout << "Compute replay: requested " << total
+              << ", compiled " << succeeded
+              << ", skipped " << skipped
+              << ", failed " << failed << "\\n";
+
+    DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules);
+    return failed == 0 ? 0 : 1;
+}
+}
+
+int main(int argc, char** argv)
+{
+    if (argc < 2 || argc > 4)
+    {
+        std::cerr << "Usage: scskiller-vulkan-warmer <capture.jsonl> [input-cache.bin] [output-cache.bin]\\n";
+        return 2;
+    }
+
+    return Run(
+        argv[1],
+        argc >= 3 ? argv[2] : std::string{},
+        argc >= 4 ? argv[3] : std::string{});
+}
