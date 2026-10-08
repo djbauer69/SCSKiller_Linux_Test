@@ -703,6 +703,420 @@ bool DecodeBase64(std::string_view encoded, std::vector<uint8_t>& output)
     return !encoded.empty() && !output.empty();
 }
 
+
+bool ParseGraphicsPipelineState(
+    std::string_view line,
+    Recording& recording,
+    std::string& error)
+{
+    std::string_view pipelines;
+    if (!ExtractArray(line, "pipelines", pipelines))
+    {
+        error = "graphics_pipeline_state is missing pipelines";
+        return false;
+    }
+
+    for (const auto pipelineText : SplitArray(pipelines))
+    {
+        const std::string entry = Trim(std::string(pipelineText));
+        if (entry.empty())
+            continue;
+
+        GraphicsPipelineRecord record;
+        uint64_t value = 0;
+
+        if (!FindHex(entry, "layout_hash", record.layoutHash))
+            return false;
+        if (!FindHex(entry, "render_pass_hash", record.renderPassHash))
+            return false;
+        if (!FindUnsigned(entry, "flags", value))
+            return false;
+        record.flags = static_cast<VkPipelineCreateFlags>(value);
+        if (!FindUnsigned(entry, "subpass", value))
+            return false;
+        record.subpass = static_cast<uint32_t>(value);
+
+        int64_t signedValue = -1;
+        if (FindSigned(entry, "base_pipeline_index", signedValue))
+            record.basePipelineIndex = static_cast<int32_t>(signedValue);
+
+        bool compatible = true;
+        if (FindBool(entry, "replay_compatible", compatible))
+            record.replayCompatible = compatible;
+
+        bool legacyRenderPass = false;
+        if (FindBool(entry, "legacy_render_pass", legacyRenderPass) &&
+            !legacyRenderPass)
+        {
+            record.replayCompatible = false;
+        }
+
+        std::string_view dynamicRendering;
+        if (ExtractObject(entry, "dynamic_rendering", dynamicRendering))
+        {
+            record.dynamicRendering = true;
+            record.replayCompatible = false;
+        }
+
+        std::string_view stages;
+        if (!ExtractArray(entry, "stages", stages))
+            return false;
+        for (const auto stageText : SplitArray(stages))
+        {
+            const std::string stageEntry = Trim(std::string(stageText));
+            if (stageEntry.empty())
+                continue;
+
+            GraphicsStageRecord stage;
+            if (!ParseShaderStage(stageEntry, stage, error))
+                return false;
+
+            bool stagePnext = false;
+            if (FindBool(stageEntry, "pnext_present", stagePnext) && stagePnext)
+                record.replayCompatible = false;
+
+            record.stages.push_back(std::move(stage));
+        }
+
+        std::string_view vertexInput;
+        if (ExtractObject(entry, "vertex_input", vertexInput))
+        {
+            record.hasViewportState = record.hasViewportState;
+            uint64_t flags = 0;
+            FindUnsigned(vertexInput, "flags", flags);
+
+            std::string_view bindings;
+            if (!ExtractArray(vertexInput, "bindings", bindings))
+                return false;
+            for (const auto bindingText : SplitArray(bindings))
+            {
+                const std::string bindingEntry = Trim(std::string(bindingText));
+                if (bindingEntry.empty())
+                    continue;
+                VertexBindingRecord binding;
+                if (!FindUnsigned(bindingEntry, "binding", value)) return false;
+                binding.binding = static_cast<uint32_t>(value);
+                if (!FindUnsigned(bindingEntry, "stride", value)) return false;
+                binding.stride = static_cast<uint32_t>(value);
+                if (!FindUnsigned(bindingEntry, "input_rate", value)) return false;
+                binding.inputRate = static_cast<VkVertexInputRate>(value);
+                record.vertexBindings.push_back(binding);
+            }
+
+            std::string_view attributes;
+            if (!ExtractArray(vertexInput, "attributes", attributes))
+                return false;
+            for (const auto attributeText : SplitArray(attributes))
+            {
+                const std::string attributeEntry = Trim(std::string(attributeText));
+                if (attributeEntry.empty())
+                    continue;
+                VertexAttributeRecord attribute;
+                if (!FindUnsigned(attributeEntry, "location", value)) return false;
+                attribute.location = static_cast<uint32_t>(value);
+                if (!FindUnsigned(attributeEntry, "binding", value)) return false;
+                attribute.binding = static_cast<uint32_t>(value);
+                if (!FindUnsigned(attributeEntry, "format", value)) return false;
+                attribute.format = static_cast<VkFormat>(value);
+                if (!FindUnsigned(attributeEntry, "offset", value)) return false;
+                attribute.offset = static_cast<uint32_t>(value);
+                record.vertexAttributes.push_back(attribute);
+            }
+
+            bool pnext = false;
+            if (FindBool(vertexInput, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+        else if (entry.find("\"vertex_input\":null") == std::string::npos)
+        {
+            return false;
+        }
+
+        std::string_view inputAssembly;
+        if (ExtractObject(entry, "input_assembly", inputAssembly))
+        {
+            if (!FindUnsigned(inputAssembly, "topology", value)) return false;
+            record.topology = static_cast<VkPrimitiveTopology>(value);
+            bool primitiveRestart = false;
+            if (FindBool(inputAssembly, "primitive_restart", primitiveRestart))
+                record.primitiveRestartEnable = primitiveRestart ? VK_TRUE : VK_FALSE;
+
+            bool pnext = false;
+            if (FindBool(inputAssembly, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view tessellation;
+        if (ExtractObject(entry, "tessellation", tessellation))
+        {
+            record.hasTessellation = true;
+            if (!FindUnsigned(tessellation, "patch_control_points", value)) return false;
+            record.patchControlPoints = static_cast<uint32_t>(value);
+
+            bool pnext = false;
+            if (FindBool(tessellation, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view viewportState;
+        if (ExtractObject(entry, "viewport_state", viewportState))
+        {
+            record.hasViewportState = true;
+            if (!FindUnsigned(viewportState, "viewport_count", value)) return false;
+            record.viewportCount = static_cast<uint32_t>(value);
+            if (!FindUnsigned(viewportState, "scissor_count", value)) return false;
+            record.scissorCount = static_cast<uint32_t>(value);
+
+            std::string_view viewports;
+            if (!ExtractArray(viewportState, "viewports", viewports))
+                return false;
+            for (const auto viewportText : SplitArray(viewports))
+            {
+                const std::string viewportEntry = Trim(std::string(viewportText));
+                if (viewportEntry.empty())
+                    continue;
+                ViewportRecord viewport;
+                if (!FindFloat(viewportEntry, "x", viewport.x)) return false;
+                if (!FindFloat(viewportEntry, "y", viewport.y)) return false;
+                if (!FindFloat(viewportEntry, "width", viewport.width)) return false;
+                if (!FindFloat(viewportEntry, "height", viewport.height)) return false;
+                if (!FindFloat(viewportEntry, "min_depth", viewport.minDepth)) return false;
+                if (!FindFloat(viewportEntry, "max_depth", viewport.maxDepth)) return false;
+                record.viewports.push_back(viewport);
+            }
+
+            std::string_view scissors;
+            if (!ExtractArray(viewportState, "scissors", scissors))
+                return false;
+            for (const auto scissorText : SplitArray(scissors))
+            {
+                const std::string scissorEntry = Trim(std::string(scissorText));
+                if (scissorEntry.empty())
+                    continue;
+                ScissorRecord scissor;
+                int64_t signedCoordinate = 0;
+                if (!FindSigned(scissorEntry, "offset_x", signedCoordinate)) return false;
+                scissor.offsetX = static_cast<int32_t>(signedCoordinate);
+                if (!FindSigned(scissorEntry, "offset_y", signedCoordinate)) return false;
+                scissor.offsetY = static_cast<int32_t>(signedCoordinate);
+                if (!FindUnsigned(scissorEntry, "extent_width", value)) return false;
+                scissor.width = static_cast<uint32_t>(value);
+                if (!FindUnsigned(scissorEntry, "extent_height", value)) return false;
+                scissor.height = static_cast<uint32_t>(value);
+                record.scissors.push_back(scissor);
+            }
+
+            bool pnext = false;
+            if (FindBool(viewportState, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view rasterization;
+        if (ExtractObject(entry, "rasterization", rasterization))
+        {
+            record.hasRasterization = true;
+            bool booleanValue = false;
+            if (FindBool(rasterization, "depth_clamp", booleanValue))
+                record.depthClampEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (FindBool(rasterization, "rasterizer_discard", booleanValue))
+                record.rasterizerDiscardEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindUnsigned(rasterization, "polygon_mode", value)) return false;
+            record.polygonMode = static_cast<VkPolygonMode>(value);
+            if (!FindUnsigned(rasterization, "cull_mode", value)) return false;
+            record.cullMode = static_cast<VkCullModeFlags>(value);
+            if (!FindUnsigned(rasterization, "front_face", value)) return false;
+            record.frontFace = static_cast<VkFrontFace>(value);
+            if (FindBool(rasterization, "depth_bias_enable", booleanValue))
+                record.depthBiasEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindFloat(rasterization, "depth_bias_constant", record.depthBiasConstantFactor)) return false;
+            if (!FindFloat(rasterization, "depth_bias_clamp", record.depthBiasClamp)) return false;
+            if (!FindFloat(rasterization, "depth_bias_slope", record.depthBiasSlopeFactor)) return false;
+            if (!FindFloat(rasterization, "line_width", record.lineWidth)) return false;
+
+            bool pnext = false;
+            if (FindBool(rasterization, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view multisample;
+        if (ExtractObject(entry, "multisample", multisample))
+        {
+            record.hasMultisample = true;
+            if (!FindUnsigned(multisample, "rasterization_samples", value)) return false;
+            record.rasterizationSamples = static_cast<VkSampleCountFlagBits>(value);
+
+            bool booleanValue = false;
+            if (FindBool(multisample, "sample_shading", booleanValue))
+                record.sampleShadingEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindFloat(multisample, "min_sample_shading", record.minSampleShading)) return false;
+            if (FindBool(multisample, "alpha_to_coverage", booleanValue))
+                record.alphaToCoverageEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (FindBool(multisample, "alpha_to_one", booleanValue))
+                record.alphaToOneEnable = booleanValue ? VK_TRUE : VK_FALSE;
+
+            std::string_view sampleMask;
+            if (!ExtractArray(multisample, "sample_mask", sampleMask))
+                return false;
+            for (const auto wordText : SplitArray(sampleMask))
+            {
+                const std::string word = Trim(std::string(wordText));
+                if (word.empty()) continue;
+                if (!FindUnsigned(word, "value", value))
+                {
+                    try { record.sampleMask.push_back(static_cast<uint32_t>(std::stoull(word))); }
+                    catch (...) { return false; }
+                }
+            }
+
+            bool pnext = false;
+            if (FindBool(multisample, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        auto parseStencil = [&](std::string_view object, StencilRecord& stencil) -> bool
+        {
+            if (!FindUnsigned(object, "fail_op", value)) return false;
+            stencil.failOp = static_cast<VkStencilOp>(value);
+            if (!FindUnsigned(object, "pass_op", value)) return false;
+            stencil.passOp = static_cast<VkStencilOp>(value);
+            if (!FindUnsigned(object, "depth_fail_op", value)) return false;
+            stencil.depthFailOp = static_cast<VkStencilOp>(value);
+            if (!FindUnsigned(object, "compare_op", value)) return false;
+            stencil.compareOp = static_cast<VkCompareOp>(value);
+            if (!FindUnsigned(object, "compare_mask", value)) return false;
+            stencil.compareMask = static_cast<uint32_t>(value);
+            if (!FindUnsigned(object, "write_mask", value)) return false;
+            stencil.writeMask = static_cast<uint32_t>(value);
+            if (!FindUnsigned(object, "reference", value)) return false;
+            stencil.reference = static_cast<uint32_t>(value);
+            return true;
+        };
+
+        std::string_view depthStencil;
+        if (ExtractObject(entry, "depth_stencil", depthStencil))
+        {
+            record.hasDepthStencil = true;
+            bool booleanValue = false;
+            if (FindBool(depthStencil, "depth_test", booleanValue))
+                record.depthTestEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (FindBool(depthStencil, "depth_write", booleanValue))
+                record.depthWriteEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindUnsigned(depthStencil, "depth_compare_op", value)) return false;
+            record.depthCompareOp = static_cast<VkCompareOp>(value);
+            if (FindBool(depthStencil, "depth_bounds", booleanValue))
+                record.depthBoundsTestEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindFloat(depthStencil, "min_depth_bounds", record.minDepthBounds)) return false;
+            if (!FindFloat(depthStencil, "max_depth_bounds", record.maxDepthBounds)) return false;
+            if (FindBool(depthStencil, "stencil_test", booleanValue))
+                record.stencilTestEnable = booleanValue ? VK_TRUE : VK_FALSE;
+
+            std::string_view front;
+            if (!ExtractObject(depthStencil, "front", front) ||
+                !parseStencil(front, record.frontStencil))
+                return false;
+            std::string_view back;
+            if (!ExtractObject(depthStencil, "back", back) ||
+                !parseStencil(back, record.backStencil))
+                return false;
+
+            bool pnext = false;
+            if (FindBool(depthStencil, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view colorBlend;
+        if (ExtractObject(entry, "color_blend", colorBlend))
+        {
+            record.hasColorBlend = true;
+            bool booleanValue = false;
+            if (FindBool(colorBlend, "logic_op_enable", booleanValue))
+                record.logicOpEnable = booleanValue ? VK_TRUE : VK_FALSE;
+            if (!FindUnsigned(colorBlend, "logic_op", value)) return false;
+            record.logicOp = static_cast<VkLogicOp>(value);
+
+            std::string_view constants;
+            if (!ExtractArray(colorBlend, "blend_constants", constants))
+                return false;
+            for (const auto constantText : SplitArray(constants))
+            {
+                const std::string constant = Trim(std::string(constantText));
+                if (constant.empty()) continue;
+                const size_t index = record.colorBlendAttachments.size();
+                (void)index;
+                float parsed = 0.0f;
+                try { parsed = std::stof(constant); }
+                catch (...) { return false; }
+                static_cast<void>(parsed);
+            }
+            std::vector<float> parsedConstants;
+            for (const auto constantText : SplitArray(constants))
+            {
+                const std::string constant = Trim(std::string(constantText));
+                if (constant.empty()) continue;
+                try { parsedConstants.push_back(std::stof(constant)); }
+                catch (...) { return false; }
+            }
+            for (size_t i = 0; i < std::min<size_t>(4, parsedConstants.size()); ++i)
+                record.blendConstants[i] = parsedConstants[i];
+
+            std::string_view attachments;
+            if (!ExtractArray(colorBlend, "attachments", attachments))
+                return false;
+            for (const auto attachmentText : SplitArray(attachments))
+            {
+                const std::string attachmentEntry = Trim(std::string(attachmentText));
+                if (attachmentEntry.empty()) continue;
+                ColorBlendAttachmentRecord attachment;
+                if (FindBool(attachmentEntry, "blend_enable", booleanValue))
+                    attachment.blendEnable = booleanValue ? VK_TRUE : VK_FALSE;
+                if (!FindUnsigned(attachmentEntry, "src_color_factor", value)) return false;
+                attachment.srcColorBlendFactor = static_cast<VkBlendFactor>(value);
+                if (!FindUnsigned(attachmentEntry, "dst_color_factor", value)) return false;
+                attachment.dstColorBlendFactor = static_cast<VkBlendFactor>(value);
+                if (!FindUnsigned(attachmentEntry, "color_op", value)) return false;
+                attachment.colorBlendOp = static_cast<VkBlendOp>(value);
+                if (!FindUnsigned(attachmentEntry, "src_alpha_factor", value)) return false;
+                attachment.srcAlphaBlendFactor = static_cast<VkBlendFactor>(value);
+                if (!FindUnsigned(attachmentEntry, "dst_alpha_factor", value)) return false;
+                attachment.dstAlphaBlendFactor = static_cast<VkBlendFactor>(value);
+                if (!FindUnsigned(attachmentEntry, "alpha_op", value)) return false;
+                attachment.alphaBlendOp = static_cast<VkBlendOp>(value);
+                if (!FindUnsigned(attachmentEntry, "color_write_mask", value)) return false;
+                attachment.colorWriteMask = static_cast<VkColorComponentFlags>(value);
+                record.colorBlendAttachments.push_back(attachment);
+            }
+
+            bool pnext = false;
+            if (FindBool(colorBlend, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        std::string_view dynamicState;
+        if (ExtractObject(entry, "dynamic_state", dynamicState))
+        {
+            std::string_view states;
+            if (!ExtractArray(dynamicState, "states", states))
+                return false;
+            for (const auto stateText : SplitArray(states))
+            {
+                const std::string stateEntry = Trim(std::string(stateText));
+                if (stateEntry.empty()) continue;
+                try { record.dynamicStates.push_back(
+                    static_cast<VkDynamicState>(std::stoul(stateEntry))); }
+                catch (...) { return false; }
+            }
+
+            bool pnext = false;
+            if (FindBool(dynamicState, "pnext_present", pnext) && pnext)
+                record.replayCompatible = false;
+        }
+
+        recording.graphicsPipelinesToReplay.push_back(std::move(record));
+    }
+
+    return true;
+}
+
 bool ParseRecording(const std::string& path, Recording& recording, std::string& error)
 {
     std::ifstream input(path);
@@ -1115,6 +1529,9 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
             uint64_t count = 0;
             if (FindUnsigned(line, "count", count))
                 recording.graphicsPipelines += static_cast<size_t>(count);
+
+            if (!ParseGraphicsPipelineState(line, recording, error))
+                return false;
             continue;
         }
 
