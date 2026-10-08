@@ -1022,8 +1022,34 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
     if (!path || physicalDevice == VK_NULL_HANDLE)
         return;
 
+    VkInstance instance = VK_NULL_HANDLE;
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_physicalDeviceInstances.find(physicalDevice);
+        if (it != g_physicalDeviceInstances.end())
+            instance = it->second;
+    }
+
+    if (instance == VK_NULL_HANDLE)
+        return;
+
+    auto getProperties =
+        g_nextPhysicalDeviceProcAddr
+            ? reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+                g_nextPhysicalDeviceProcAddr(instance, "vkGetPhysicalDeviceProperties"))
+            : nullptr;
+
+    if (!getProperties && g_nextInstanceProcAddr)
+    {
+        getProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+            g_nextInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"));
+    }
+
+    if (!getProperties)
+        return;
+
     VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    getProperties(physicalDevice, &properties);
 
     char uuid[VK_UUID_SIZE * 2 + 1]{};
     for (size_t i = 0; i < VK_UUID_SIZE; ++i)
@@ -1043,6 +1069,7 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
         std::fclose(file);
     }
 }
+
 
 void RecordCount(const char* event, uint64_t sequence, uint32_t count)
 {
@@ -2053,7 +2080,10 @@ vk_layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* name)
         return nullptr;
 
     if (g_nextPhysicalDeviceProcAddr)
-        return g_nextPhysicalDeviceProcAddr(instance, name);
+    {
+        if (auto function = g_nextPhysicalDeviceProcAddr(instance, name))
+            return function;
+    }
 
     return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
 }
