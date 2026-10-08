@@ -9,6 +9,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
+    Console.WriteLine("  record-vulkan <executable> <workdir> <layer-dir> <capture.jsonl> [args...]  Record a native Vulkan process");
     Console.WriteLine("  record-proton <proton> <prefix> <workdir> <game-exe> <layer-dir> <capture.jsonl> [game args...]  Record Vulkan through Proton");
     Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path]  Replay recorded Vulkan pipelines through the driver");
     return;
@@ -60,6 +61,30 @@ switch (args[0])
 
         Console.WriteLine($"Proton warmer exit code: {result.ExitCode}");
         Environment.ExitCode = result.ExitCode;
+        break;
+
+    case "record-vulkan" when args.Length >= 5:
+        var recordExecutable = args[1];
+        var recordProcessWorkdir = args[2];
+        var recordProcessLayerDir = args[3];
+        var recordProcessCapture = args[4];
+        var recordProcessArguments = args.Length > 5 ? args[5..] : Array.Empty<string>();
+
+        var processRecordResult = await VulkanProcessRecorder.RunAsync(
+            new VulkanProcessRecordOptions(
+                recordExecutable,
+                recordProcessWorkdir,
+                recordProcessLayerDir,
+                recordProcessCapture,
+                recordProcessArguments));
+
+        Console.Write(processRecordResult.StandardOutput);
+        if (!string.IsNullOrEmpty(processRecordResult.StandardError))
+            Console.Error.Write(processRecordResult.StandardError);
+
+        Console.WriteLine($"Vulkan recording exit code: {processRecordResult.ExitCode}");
+        Console.WriteLine($"Recording file: {processRecordResult.RecordingPath}");
+        Environment.ExitCode = processRecordResult.ExitCode;
         break;
 
     case "record-proton" when args.Length >= 7:
