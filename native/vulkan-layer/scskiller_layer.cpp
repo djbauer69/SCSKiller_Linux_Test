@@ -80,6 +80,46 @@ uint64_t HashWords(const uint32_t* words, size_t count)
     return hash;
 }
 
+std::string Base64(const uint8_t* data, size_t size)
+{
+    static constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((size + 2) / 3) * 4);
+    for (size_t i = 0; i < size; i += 3)
+    {
+        const uint32_t a = data[i];
+        const uint32_t b = i + 1 < size ? data[i + 1] : 0;
+        const uint32_t d = i + 2 < size ? data[i + 2] : 0;
+        const uint32_t triple = (a << 16) | (b << 8) | d;
+        out.push_back(table[(triple >> 18) & 63]);
+        out.push_back(table[(triple >> 12) & 63]);
+        out.push_back(i + 1 < size ? table[(triple >> 6) & 63] : '=');
+        out.push_back(i + 2 < size ? table[triple & 63] : '=');
+    }
+    return out;
+}
+
+void RecordShaderCode(uint64_t sequence, uint64_t hash, const uint32_t* words, size_t wordCount)
+{
+    if (!RecordingEnabled() || !words || wordCount == 0)
+        return;
+
+    const char* path = RecordingPath();
+    if (!path)
+        return;
+
+    const auto encoded = Base64(reinterpret_cast<const uint8_t*>(words), wordCount * sizeof(uint32_t));
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(file,
+            "{\"schema\":2,\"event\":\"shader_module_code\",\"sequence\":%llu,\"hash\":\"%016llx\",\"code_base64\":\"%s\"}\n",
+            static_cast<unsigned long long>(sequence),
+            static_cast<unsigned long long>(hash),
+            encoded.c_str());
+        std::fclose(file);
+    }
+}
+
 void RecordShader(const char* event, uint64_t sequence, uint64_t hash, size_t wordCount)
 {
     if (!RecordingEnabled())
@@ -450,7 +490,11 @@ vkCreateShaderModule(VkDevice device,
     }
 
     if (hash != 0)
-        RecordShader("shader_module_create", g_sequence.fetch_add(1), hash, wordCount);
+    {
+        const auto sequence = g_sequence.fetch_add(1);
+        RecordShader("shader_module_create", sequence, hash, wordCount);
+        RecordShaderCode(sequence, hash, createInfo->pCode, wordCount);
+    }
 
     return result;
 }
