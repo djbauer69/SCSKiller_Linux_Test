@@ -812,8 +812,7 @@ int Run(const std::string& recordingPath,
 
     VkResult cacheResult = vkCreatePipelineCache(
         context.device, &cacheInfo, nullptr, &context.cache);
-    if (cacheResult == VK_ERROR_INVALID_PIPELINE_CACHE_DATA &&
-        cacheInfo.initialDataSize != 0)
+    if (cacheResult != VK_SUCCESS && cacheInfo.initialDataSize != 0)
     {
         std::cerr << "Warning: input pipeline cache was rejected by this device; starting empty\\n";
         cacheInfo.initialDataSize = 0;
