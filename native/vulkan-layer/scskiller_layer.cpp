@@ -120,7 +120,7 @@ bool DebugEnabled()
 void Debug(const char* message)
 {
     if (DebugEnabled())
-        std::fprintf(stderr, "[SCSKiller Vulkan] %s\\n", message);
+        std::fprintf(stderr, "[SCSKiller Vulkan] %s\n", message);
 }
 
 bool RecordingEnabled()
