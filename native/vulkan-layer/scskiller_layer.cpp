@@ -290,6 +290,25 @@ std::string Base64(const uint8_t* data, size_t size)
     return out;
 }
 
+std::string JsonEscape(std::string_view value)
+{
+    std::string out;
+    out.reserve(value.size() + 8);
+    for (const char c : value)
+    {
+        switch (c)
+        {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
 void RecordShaderCode(uint64_t sequence, uint64_t hash, const uint32_t* words, size_t wordCount)
 {
     if (!RecordingEnabled() || !words || wordCount == 0)
@@ -379,10 +398,15 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
     if (!path)
         return;
 
+    const auto writeFloat = [](std::FILE* file, float value)
+    {
+        std::fprintf(file, "%.9g", static_cast<double>(value));
+    };
+
     if (std::FILE* file = std::fopen(path, "ab"))
     {
         std::fprintf(file,
-            "{\"schema\":2,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+            "{\"schema\":3,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
             static_cast<unsigned long long>(sequence), count);
 
         for (uint32_t i = 0; i < count; ++i)
@@ -413,23 +437,280 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     if (it != g_shaderHashes.end())
                         shaderHash = it->second;
                 }
-                const auto specializationHash = HashSpecializationInfo(state.pSpecializationInfo);
+
                 std::fprintf(file,
                     "{\"stage\":\"%s\",\"stage_flags\":%u,\"module_hash\":\"%016llx\",\"entry_point\":\"%s\",\"specialization\":",
                     ShaderStageName(state.stage),
                     state.flags,
                     static_cast<unsigned long long>(shaderHash),
-                    state.pName ? state.pName : "main");
+                    JsonEscape(state.pName ? state.pName : "main").c_str());
                 RecordSpecialization(file, state.pSpecializationInfo);
                 std::fputc('}', file);
             }
 
             std::fprintf(file,
-                "],\"flags\":%u,\"subpass\":%u}",
-                info.flags, info.subpass);
+                "],\"flags\":%u,\"subpass\":%u,\"base_pipeline_index\":%d",
+                info.flags, info.subpass, info.basePipelineIndex);
+
+            const bool hasLegacyRenderPass = info.renderPass != VK_NULL_HANDLE;
+            std::fprintf(file, ",\"legacy_render_pass\":%s", hasLegacyRenderPass ? "true" : "false");
+
+            const auto* node = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
+            const VkPipelineRenderingCreateInfo* rendering = nullptr;
+            while (node)
+            {
+                if (node->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO)
+                {
+                    rendering = reinterpret_cast<const VkPipelineRenderingCreateInfo*>(node);
+                    break;
+                }
+                node = node->pNext;
+            }
+
+            if (rendering)
+            {
+                std::fprintf(file,
+                    ",\"dynamic_rendering\":{\"view_mask\":%u,\"color_formats\":[",
+                    rendering->viewMask);
+                for (uint32_t format = 0; format < rendering->colorAttachmentCount; ++format)
+                {
+                    if (format) std::fputc(',', file);
+                    std::fprintf(file, "%d", rendering->pColorAttachmentFormats[format]);
+                }
+                std::fprintf(file,
+                    "],\"depth_format\":%d,\"stencil_format\":%d}",
+                    rendering->depthAttachmentFormat,
+                    rendering->stencilAttachmentFormat);
+            }
+            else
+            {
+                std::fputs(",\"dynamic_rendering\":null", file);
+            }
+
+            if (info.pVertexInputState)
+            {
+                const auto& state = *info.pVertexInputState;
+                std::fprintf(file, ",\"vertex_input\":{\"flags\":%u,\"bindings\":[", state.flags);
+                for (uint32_t binding = 0; binding < state.vertexBindingDescriptionCount; ++binding)
+                {
+                    if (binding) std::fputc(',', file);
+                    const auto& description = state.pVertexBindingDescriptions[binding];
+                    std::fprintf(file,
+                        "{\"binding\":%u,\"stride\":%u,\"input_rate\":%u}",
+                        description.binding, description.stride, description.inputRate);
+                }
+                std::fputs("],\"attributes\":[", file);
+                for (uint32_t attribute = 0; attribute < state.vertexAttributeDescriptionCount; ++attribute)
+                {
+                    if (attribute) std::fputc(',', file);
+                    const auto& description = state.pVertexAttributeDescriptions[attribute];
+                    std::fprintf(file,
+                        "{\"location\":%u,\"binding\":%u,\"format\":%d,\"offset\":%u}",
+                        description.location, description.binding, description.format, description.offset);
+                }
+                std::fprintf(file, "],\"pnext_present\":%s}",
+                             state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"vertex_input\":null", file);
+            }
+
+            if (info.pInputAssemblyState)
+            {
+                const auto& state = *info.pInputAssemblyState;
+                std::fprintf(file,
+                    ",\"input_assembly\":{\"flags\":%u,\"topology\":%u,\"primitive_restart\":%s,\"pnext_present\":%s}",
+                    state.flags, state.topology,
+                    state.primitiveRestartEnable ? "true" : "false",
+                    state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"input_assembly\":null", file);
+            }
+
+            if (info.pTessellationState)
+            {
+                const auto& state = *info.pTessellationState;
+                std::fprintf(file,
+                    ",\"tessellation\":{\"flags\":%u,\"patch_control_points\":%u,\"pnext_present\":%s}",
+                    state.flags, state.patchControlPoints, state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"tessellation\":null", file);
+            }
+
+            if (info.pViewportState)
+            {
+                const auto& state = *info.pViewportState;
+                std::fprintf(file,
+                    ",\"viewport_state\":{\"flags\":%u,\"viewport_count\":%u,\"scissor_count\":%u,\"viewports\":[",
+                    state.flags, state.viewportCount, state.scissorCount);
+                for (uint32_t viewport = 0; viewport < state.viewportCount; ++viewport)
+                {
+                    if (viewport) std::fputc(',', file);
+                    const auto& value = state.pViewports[viewport];
+                    std::fputs("{\"x\":", file); writeFloat(file, value.x);
+                    std::fputs(",\"y\":", file); writeFloat(file, value.y);
+                    std::fputs(",\"width\":", file); writeFloat(file, value.width);
+                    std::fputs(",\"height\":", file); writeFloat(file, value.height);
+                    std::fputs(",\"min_depth\":", file); writeFloat(file, value.minDepth);
+                    std::fputs(",\"max_depth\":", file); writeFloat(file, value.maxDepth);
+                    std::fputc('}', file);
+                }
+                std::fputs("],\"scissors\":[", file);
+                for (uint32_t scissor = 0; scissor < state.scissorCount; ++scissor)
+                {
+                    if (scissor) std::fputc(',', file);
+                    const auto& value = state.pScissors[scissor];
+                    std::fprintf(file,
+                        "{\"offset_x\":%d,\"offset_y\":%d,\"extent_width\":%u,\"extent_height\":%u}",
+                        value.offset.x, value.offset.y, value.extent.width, value.extent.height);
+                }
+                std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"viewport_state\":null", file);
+            }
+
+            if (info.pRasterizationState)
+            {
+                const auto& state = *info.pRasterizationState;
+                std::fprintf(file,
+                    ",\"rasterization\":{\"flags\":%u,\"depth_clamp\":%s,\"rasterizer_discard\":%s,\"polygon_mode\":%u,\"cull_mode\":%u,\"front_face\":%u,\"depth_bias_enable\":%s,\"depth_bias_constant\":",
+                    state.flags,
+                    state.depthClampEnable ? "true" : "false",
+                    state.rasterizerDiscardEnable ? "true" : "false",
+                    state.polygonMode, state.cullMode, state.frontFace,
+                    state.depthBiasEnable ? "true" : "false");
+                writeFloat(file, state.depthBiasConstantFactor);
+                std::fputs(",\"depth_bias_clamp\":", file); writeFloat(file, state.depthBiasClamp);
+                std::fputs(",\"depth_bias_slope\":", file); writeFloat(file, state.depthBiasSlopeFactor);
+                std::fputs(",\"line_width\":", file); writeFloat(file, state.lineWidth);
+                std::fprintf(file, ",\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"rasterization\":null", file);
+            }
+
+            if (info.pMultisampleState)
+            {
+                const auto& state = *info.pMultisampleState;
+                std::fprintf(file,
+                    ",\"multisample\":{\"flags\":%u,\"rasterization_samples\":%u,\"sample_shading\":%s,\"min_sample_shading\":",
+                    state.flags,
+                    state.rasterizationSamples,
+                    state.sampleShadingEnable ? "true" : "false");
+                writeFloat(file, state.minSampleShading);
+                std::fprintf(file,
+                    ",\"alpha_to_coverage\":%s,\"alpha_to_one\":%s,\"sample_mask_word_count\":%u,\"sample_mask\":[",
+                    state.alphaToCoverageEnable ? "true" : "false",
+                    state.alphaToOneEnable ? "true" : "false",
+                    state.pSampleMask ? ((static_cast<uint32_t>(state.rasterizationSamples) + 31u) / 32u) : 0u);
+                if (state.pSampleMask)
+                {
+                    const uint32_t wordCount =
+                        (static_cast<uint32_t>(state.rasterizationSamples) + 31u) / 32u;
+                    for (uint32_t word = 0; word < wordCount; ++word)
+                    {
+                        if (word) std::fputc(',', file);
+                        std::fprintf(file, "%u", state.pSampleMask[word]);
+                    }
+                }
+                std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"multisample\":null", file);
+            }
+
+            if (info.pDepthStencilState)
+            {
+                const auto& state = *info.pDepthStencilState;
+                const auto writeStencil = [file](const VkStencilOpState& stencil)
+                {
+                    std::fprintf(file,
+                        "{\"fail_op\":%u,\"pass_op\":%u,\"depth_fail_op\":%u,\"compare_op\":%u,\"compare_mask\":%u,\"write_mask\":%u,\"reference\":%u}",
+                        stencil.failOp, stencil.passOp, stencil.depthFailOp, stencil.compareOp,
+                        stencil.compareMask, stencil.writeMask, stencil.reference);
+                };
+                std::fprintf(file,
+                    ",\"depth_stencil\":{\"flags\":%u,\"depth_test\":%s,\"depth_write\":%s,\"depth_compare_op\":%u,\"depth_bounds\":%s,\"min_depth_bounds\":",
+                    state.flags,
+                    state.depthTestEnable ? "true" : "false",
+                    state.depthWriteEnable ? "true" : "false",
+                    state.depthCompareOp,
+                    state.depthBoundsTestEnable ? "true" : "false");
+                writeFloat(file, state.minDepthBounds);
+                std::fputs(",\"max_depth_bounds\":", file); writeFloat(file, state.maxDepthBounds);
+                std::fprintf(file,
+                    ",\"stencil_test\":%s,\"front\":", state.stencilTestEnable ? "true" : "false");
+                writeStencil(state.front);
+                std::fputs(",\"back\":", file);
+                writeStencil(state.back);
+                std::fprintf(file, ",\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"depth_stencil\":null", file);
+            }
+
+            if (info.pColorBlendState)
+            {
+                const auto& state = *info.pColorBlendState;
+                std::fprintf(file,
+                    ",\"color_blend\":{\"flags\":%u,\"logic_op_enable\":%s,\"logic_op\":%u,\"blend_constants\":[",
+                    state.flags, state.logicOpEnable ? "true" : "false", state.logicOp);
+                for (size_t constant = 0; constant < 4; ++constant)
+                {
+                    if (constant) std::fputc(',', file);
+                    writeFloat(file, state.blendConstants[constant]);
+                }
+                std::fputs("],\"attachments\":[", file);
+                for (uint32_t attachment = 0; attachment < state.attachmentCount; ++attachment)
+                {
+                    if (attachment) std::fputc(',', file);
+                    const auto& value = state.pAttachments[attachment];
+                    std::fprintf(file,
+                        "{\"blend_enable\":%s,\"src_color_factor\":%u,\"dst_color_factor\":%u,\"color_op\":%u,\"src_alpha_factor\":%u,\"dst_alpha_factor\":%u,\"alpha_op\":%u,\"color_write_mask\":%u}",
+                        value.blendEnable ? "true" : "false",
+                        value.srcColorBlendFactor, value.dstColorBlendFactor, value.colorBlendOp,
+                        value.srcAlphaBlendFactor, value.dstAlphaBlendFactor, value.alphaBlendOp,
+                        value.colorWriteMask);
+                }
+                std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"color_blend\":null", file);
+            }
+
+            if (info.pDynamicState)
+            {
+                const auto& state = *info.pDynamicState;
+                std::fprintf(file,
+                    ",\"dynamic_state\":{\"flags\":%u,\"states\":[",
+                    state.flags);
+                for (uint32_t dynamic = 0; dynamic < state.dynamicStateCount; ++dynamic)
+                {
+                    if (dynamic) std::fputc(',', file);
+                    std::fprintf(file, "%u", state.pDynamicStates[dynamic]);
+                }
+                std::fprintf(file, "],\"pnext_present\":%s}", state.pNext ? "true" : "false");
+            }
+            else
+            {
+                std::fputs(",\"dynamic_state\":null", file);
+            }
+
+            std::fputc('}', file);
         }
 
-        std::fprintf(file, "]}\n");
+        std::fputs("]}\n", file);
         std::fclose(file);
     }
 }
