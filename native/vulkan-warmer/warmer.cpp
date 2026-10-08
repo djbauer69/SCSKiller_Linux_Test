@@ -1884,6 +1884,19 @@ int Run(const std::string& recordingPath,
         return 1;
     }
 
+    VkPhysicalDeviceProperties selectedProperties{};
+    vkGetPhysicalDeviceProperties(context.physicalDevice, &selectedProperties);
+
+    char selectedUuidBuffer[VK_UUID_SIZE * 2 + 1]{};
+    for (size_t i = 0; i < VK_UUID_SIZE; ++i)
+        std::snprintf(selectedUuidBuffer + (i * 2), 3, "%02x", selectedProperties.pipelineCacheUUID[i]);
+    const std::string selectedUuid = selectedUuidBuffer;
+
+    const bool recordedCacheMatchesDevice =
+        !recording.physicalDevice.present ||
+        recording.physicalDevice.pipelineCacheUuid.empty() ||
+        recording.physicalDevice.pipelineCacheUuid == selectedUuid;
+
     std::vector<uint8_t> inputCache;
     VkPipelineCacheCreateInfo cacheInfo{
         VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
@@ -1894,8 +1907,14 @@ int Run(const std::string& recordingPath,
     };
     if (!inputCachePath.empty() && inputCachePath != "-")
     {
-        if (!ReadBinaryFile(inputCachePath, inputCache))
+        if (!recordedCacheMatchesDevice)
+        {
+            std::cerr << "Warning: input pipeline cache UUID does not match the selected Vulkan device; starting empty\\n";
+        }
+        else if (!ReadBinaryFile(inputCachePath, inputCache))
+        {
             std::cerr << "Warning: could not read input cache; starting empty\\n";
+        }
         else
         {
             cacheInfo.initialDataSize = inputCache.size();
