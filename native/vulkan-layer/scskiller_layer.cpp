@@ -286,6 +286,8 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines);
+    if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
 
     std::lock_guard lock(g_mutex);
     auto it = g_devices.find(device);
@@ -308,5 +310,5 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
     if (std::strcmp(name, "vkEnumerateInstanceLayerProperties") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceLayerProperties);
 
-    return nullptr;
+    return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
 }
