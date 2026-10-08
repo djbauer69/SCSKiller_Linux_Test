@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <type_traits>
 
 namespace
 {
@@ -41,6 +42,10 @@ struct DeviceDispatch
 {
     PFN_vkGetDeviceProcAddr GetDeviceProcAddr = nullptr;
     PFN_vkDestroyDevice DestroyDevice = nullptr;
+    PFN_vkCreateDescriptorSetLayout CreateDescriptorSetLayout = nullptr;
+    PFN_vkDestroyDescriptorSetLayout DestroyDescriptorSetLayout = nullptr;
+    PFN_vkCreatePipelineLayout CreatePipelineLayout = nullptr;
+    PFN_vkDestroyPipelineLayout DestroyPipelineLayout = nullptr;
     PFN_vkCreateShaderModule CreateShaderModule = nullptr;
     PFN_vkDestroyShaderModule DestroyShaderModule = nullptr;
     PFN_vkCreateGraphicsPipelines CreateGraphicsPipelines = nullptr;
@@ -54,6 +59,52 @@ struct DeviceDispatch
 std::mutex g_mutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
 std::unordered_map<ShaderKey, uint64_t, ShaderKeyHash> g_shaderHashes;
+
+struct DescriptorLayoutKey
+{
+    VkDevice device{};
+    VkDescriptorSetLayout layout{};
+
+    bool operator==(const DescriptorLayoutKey& other) const
+    {
+        return device == other.device && layout == other.layout;
+    }
+};
+
+struct DescriptorLayoutKeyHash
+{
+    size_t operator()(const DescriptorLayoutKey& key) const noexcept
+    {
+        const auto a = reinterpret_cast<uintptr_t>(key.device);
+        const auto b = reinterpret_cast<uintptr_t>(key.layout);
+        return static_cast<size_t>((a >> 4) ^ (b + 0x517cc1b727220a95ull + (a << 6) + (a >> 2)));
+    }
+};
+
+struct PipelineLayoutKey
+{
+    VkDevice device{};
+    VkPipelineLayout layout{};
+
+    bool operator==(const PipelineLayoutKey& other) const
+    {
+        return device == other.device && layout == other.layout;
+    }
+};
+
+struct PipelineLayoutKeyHash
+{
+    size_t operator()(const PipelineLayoutKey& key) const noexcept
+    {
+        const auto a = reinterpret_cast<uintptr_t>(key.device);
+        const auto b = reinterpret_cast<uintptr_t>(key.layout);
+        return static_cast<size_t>((a >> 4) ^ (b + 0x94d049bb133111ebull + (a << 6) + (a >> 2)));
+    }
+};
+
+std::unordered_map<DescriptorLayoutKey, uint64_t, DescriptorLayoutKeyHash> g_descriptorLayoutHashes;
+std::unordered_map<PipelineLayoutKey, uint64_t, PipelineLayoutKeyHash> g_pipelineLayoutHashes;
+
 std::atomic<uint64_t> g_sequence{1};
 PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
 
@@ -78,6 +129,119 @@ uint64_t HashWords(const uint32_t* words, size_t count)
         hash *= 1099511628211ull;
     }
     return hash;
+}
+
+uint64_t HashBytes(const void* data, size_t size, uint64_t seed = 1469598103934665603ull)
+{
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    uint64_t hash = seed;
+    for (size_t i = 0; i < size; ++i)
+    {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+uint64_t HashCombine(uint64_t hash, uint64_t value)
+{
+    hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
+template <typename T>
+uint64_t HandleBits(T handle)
+{
+    if constexpr (std::is_pointer_v<T>)
+        return reinterpret_cast<uintptr_t>(handle);
+
+    return static_cast<uint64_t>(handle);
+}
+
+uint64_t HashDescriptorSetLayoutCreateInfo(const VkDescriptorSetLayoutCreateInfo* info)
+{
+    if (!info)
+        return 0;
+
+    uint64_t hash = HashCombine(1469598103934665603ull, info->flags);
+    for (uint32_t i = 0; i < info->bindingCount; ++i)
+    {
+        const auto& binding = info->pBindings[i];
+        hash = HashCombine(hash, binding.binding);
+        hash = HashCombine(hash, binding.descriptorType);
+        hash = HashCombine(hash, binding.descriptorCount);
+        hash = HashCombine(hash, binding.stageFlags);
+        hash = HashCombine(hash, binding.pImmutableSamplers ? binding.descriptorCount : 0);
+        if (binding.pImmutableSamplers)
+        {
+            for (uint32_t sampler = 0; sampler < binding.descriptorCount; ++sampler)
+                hash = HashCombine(hash, HandleBits(binding.pImmutableSamplers[sampler]));
+        }
+    }
+    return hash;
+}
+
+uint64_t HashPipelineLayoutCreateInfo(
+    VkDevice device,
+    const VkPipelineLayoutCreateInfo* info)
+{
+    if (!info)
+        return 0;
+
+    uint64_t hash = HashCombine(1469598103934665603ull, info->flags);
+    for (uint32_t i = 0; i < info->setLayoutCount; ++i)
+    {
+        uint64_t layoutHash = 0;
+        std::lock_guard lock(g_mutex);
+        auto it = g_descriptorLayoutHashes.find(
+            DescriptorLayoutKey{device, info->pSetLayouts[i]});
+        if (it != g_descriptorLayoutHashes.end())
+            layoutHash = it->second;
+
+        hash = HashCombine(hash, layoutHash);
+    }
+
+    for (uint32_t i = 0; i < info->pushConstantRangeCount; ++i)
+    {
+        const auto& range = info->pPushConstantRanges[i];
+        hash = HashCombine(hash, range.stageFlags);
+        hash = HashCombine(hash, range.offset);
+        hash = HashCombine(hash, range.size);
+    }
+
+    return hash;
+}
+
+uint64_t HashSpecializationInfo(const VkSpecializationInfo* info)
+{
+    if (!info)
+        return 0;
+
+    uint64_t hash = HashCombine(1469598103934665603ull, info->mapEntryCount);
+    for (uint32_t i = 0; i < info->mapEntryCount; ++i)
+    {
+        const auto& entry = info->pMapEntries[i];
+        hash = HashCombine(hash, entry.constantID);
+        hash = HashCombine(hash, entry.offset);
+        hash = HashCombine(hash, entry.size);
+        if (entry.size && info->pData)
+            hash = HashBytes(static_cast<const uint8_t*>(info->pData) + entry.offset, entry.size, hash);
+    }
+    return hash;
+}
+
+const char* ShaderStageName(VkShaderStageFlagBits stage)
+{
+    switch (stage)
+    {
+    case VK_SHADER_STAGE_VERTEX_BIT: return "vertex";
+    case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT: return "tessellation_control";
+    case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: return "tessellation_evaluation";
+    case VK_SHADER_STAGE_GEOMETRY_BIT: return "geometry";
+    case VK_SHADER_STAGE_FRAGMENT_BIT: return "fragment";
+    case VK_SHADER_STAGE_COMPUTE_BIT: return "compute";
+    default: return "other";
+    }
 }
 
 std::string Base64(const uint8_t* data, size_t size)
@@ -191,28 +355,47 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
     if (std::FILE* file = std::fopen(path, "ab"))
     {
         std::fprintf(file,
-            "{\"schema\":1,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+            "{\"schema\":2,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
             static_cast<unsigned long long>(sequence), count);
 
         for (uint32_t i = 0; i < count; ++i)
         {
             if (i) std::fputc(',', file);
-            std::fprintf(file, "{\"stage_hashes\":[");
-            for (uint32_t s = 0; s < infos[i].stageCount; ++s)
+            const auto& info = infos[i];
+
+            uint64_t layoutHash = 0;
             {
-                if (s) std::fputc(',', file);
-                uint64_t hash = 0;
-                if (infos[i].pStages[s].module != VK_NULL_HANDLE)
+                std::lock_guard lock(g_mutex);
+                auto it = g_pipelineLayoutHashes.find(PipelineLayoutKey{device, info.layout});
+                if (it != g_pipelineLayoutHashes.end())
+                    layoutHash = it->second;
+            }
+
+            std::fprintf(file,
+                "{\"layout_hash\":\"%016llx\",\"stage_count\":%u,\"stages\":[",
+                static_cast<unsigned long long>(layoutHash), info.stageCount);
+
+            for (uint32_t stage = 0; stage < info.stageCount; ++stage)
+            {
+                if (stage) std::fputc(',', file);
+                const auto& state = info.pStages[stage];
+                uint64_t shaderHash = 0;
                 {
                     std::lock_guard lock(g_mutex);
-                    auto it = g_shaderHashes.find(ShaderKey{device, infos[i].pStages[s].module});
+                    auto it = g_shaderHashes.find(ShaderKey{device, state.module});
                     if (it != g_shaderHashes.end())
-                        hash = it->second;
+                        shaderHash = it->second;
                 }
-                std::fprintf(file, "\"%016llx\"", static_cast<unsigned long long>(hash));
+                std::fprintf(file,
+                    "{\"stage\":\"%s\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\"}",
+                    ShaderStageName(state.stage),
+                    static_cast<unsigned long long>(shaderHash),
+                    static_cast<unsigned long long>(HashSpecializationInfo(state.pSpecializationInfo)));
             }
-            std::fprintf(file, "],\"flags\":%u,\"subpass\":%u}",
-                         infos[i].flags, infos[i].subpass);
+
+            std::fprintf(file,
+                "],\"flags\":%u,\"subpass\":%u}\n",
+                info.flags, info.subpass);
         }
 
         std::fprintf(file, "]}\n");
@@ -387,6 +570,14 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
 
     dispatch.DestroyDevice = reinterpret_cast<PFN_vkDestroyDevice>(
         dispatch.GetDeviceProcAddr(*device, "vkDestroyDevice"));
+    dispatch.CreateDescriptorSetLayout = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(
+        dispatch.GetDeviceProcAddr(*device, "vkCreateDescriptorSetLayout"));
+    dispatch.DestroyDescriptorSetLayout = reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(
+        dispatch.GetDeviceProcAddr(*device, "vkDestroyDescriptorSetLayout"));
+    dispatch.CreatePipelineLayout = reinterpret_cast<PFN_vkCreatePipelineLayout>(
+        dispatch.GetDeviceProcAddr(*device, "vkCreatePipelineLayout"));
+    dispatch.DestroyPipelineLayout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(
+        dispatch.GetDeviceProcAddr(*device, "vkDestroyPipelineLayout"));
     dispatch.CreateShaderModule = reinterpret_cast<PFN_vkCreateShaderModule>(
         dispatch.GetDeviceProcAddr(*device, "vkCreateShaderModule"));
     dispatch.DestroyShaderModule = reinterpret_cast<PFN_vkDestroyShaderModule>(
@@ -429,10 +620,165 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
             else
                 ++shader;
         }
+
+        for (auto layout = g_descriptorLayoutHashes.begin(); layout != g_descriptorLayoutHashes.end();)
+        {
+            if (layout->first.device == device)
+                layout = g_descriptorLayoutHashes.erase(layout);
+            else
+                ++layout;
+        }
+
+        for (auto layout = g_pipelineLayoutHashes.begin(); layout != g_pipelineLayoutHashes.end();)
+        {
+            if (layout->first.device == device)
+                layout = g_pipelineLayoutHashes.erase(layout);
+            else
+                ++layout;
+        }
     }
 
     if (dispatch.DestroyDevice)
         dispatch.DestroyDevice(device, allocator);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateDescriptorSetLayout(VkDevice device,
+                            const VkDescriptorSetLayoutCreateInfo* createInfo,
+                            const VkAllocationCallbacks* allocator,
+                            VkDescriptorSetLayout* setLayout)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+
+    if (!dispatch.CreateDescriptorSetLayout)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    const uint64_t hash = HashDescriptorSetLayoutCreateInfo(createInfo);
+    const VkResult result = dispatch.CreateDescriptorSetLayout(device, createInfo, allocator, setLayout);
+    if (result == VK_SUCCESS && setLayout && hash)
+    {
+        {
+            std::lock_guard lock(g_mutex);
+            g_descriptorLayoutHashes[DescriptorLayoutKey{device, *setLayout}] = hash;
+        }
+
+        if (RecordingEnabled())
+        {
+            const auto sequence = g_sequence.fetch_add(1);
+            if (const char* path = RecordingPath())
+            {
+                if (std::FILE* file = std::fopen(path, "ab"))
+                {
+                    std::fprintf(file,
+                        "{\"schema\":2,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"bindings\":%u,\"flags\":%u}\n",
+                        static_cast<unsigned long long>(sequence),
+                        static_cast<unsigned long long>(hash),
+                        createInfo ? createInfo->bindingCount : 0,
+                        createInfo ? createInfo->flags : 0);
+                    std::fclose(file);
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyDescriptorSetLayout(VkDevice device,
+                             VkDescriptorSetLayout setLayout,
+                             const VkAllocationCallbacks* allocator)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return;
+
+        dispatch = it->second;
+        g_descriptorLayoutHashes.erase(DescriptorLayoutKey{device, setLayout});
+    }
+
+    if (dispatch.DestroyDescriptorSetLayout)
+        dispatch.DestroyDescriptorSetLayout(device, setLayout, allocator);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreatePipelineLayout(VkDevice device,
+                       const VkPipelineLayoutCreateInfo* createInfo,
+                       const VkAllocationCallbacks* allocator,
+                       VkPipelineLayout* pipelineLayout)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return VK_ERROR_DEVICE_LOST;
+        dispatch = it->second;
+    }
+
+    if (!dispatch.CreatePipelineLayout)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    const uint64_t hash = HashPipelineLayoutCreateInfo(device, createInfo);
+    const VkResult result = dispatch.CreatePipelineLayout(device, createInfo, allocator, pipelineLayout);
+    if (result == VK_SUCCESS && pipelineLayout && hash)
+    {
+        {
+            std::lock_guard lock(g_mutex);
+            g_pipelineLayoutHashes[PipelineLayoutKey{device, *pipelineLayout}] = hash;
+        }
+
+        if (RecordingEnabled())
+        {
+            const auto sequence = g_sequence.fetch_add(1);
+            if (const char* path = RecordingPath())
+            {
+                if (std::FILE* file = std::fopen(path, "ab"))
+                {
+                    std::fprintf(file,
+                        "{\"schema\":2,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"set_layouts\":%u,\"push_constants\":%u,\"flags\":%u}\n",
+                        static_cast<unsigned long long>(sequence),
+                        static_cast<unsigned long long>(hash),
+                        createInfo ? createInfo->setLayoutCount : 0,
+                        createInfo ? createInfo->pushConstantRangeCount : 0,
+                        createInfo ? createInfo->flags : 0);
+                    std::fclose(file);
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroyPipelineLayout(VkDevice device,
+                        VkPipelineLayout pipelineLayout,
+                        const VkAllocationCallbacks* allocator)
+{
+    DeviceDispatch dispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_devices.find(device);
+        if (it == g_devices.end())
+            return;
+
+        dispatch = it->second;
+        g_pipelineLayoutHashes.erase(PipelineLayoutKey{device, pipelineLayout});
+    }
+
+    if (dispatch.DestroyPipelineLayout)
+        dispatch.DestroyPipelineLayout(device, pipelineLayout, allocator);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
@@ -550,10 +896,48 @@ vkCreateComputePipelines(VkDevice device,
     if (!dispatch.CreateComputePipelines)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    RecordCount(
-        "compute_pipeline_create",
-        g_sequence.fetch_add(1),
-        createInfoCount);
+    const auto sequence = g_sequence.fetch_add(1);
+    RecordCount("compute_pipeline_create", sequence, createInfoCount);
+    if (RecordingEnabled() && createInfos)
+    {
+        if (const char* path = RecordingPath())
+        {
+            if (std::FILE* file = std::fopen(path, "ab"))
+            {
+                std::fprintf(file,
+                    "{\"schema\":2,\"event\":\"compute_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+                    static_cast<unsigned long long>(sequence), createInfoCount);
+                for (uint32_t i = 0; i < createInfoCount; ++i)
+                {
+                    if (i) std::fputc(',', file);
+                    const auto& info = createInfos[i];
+                    uint64_t shaderHash = 0;
+                    {
+                        std::lock_guard lock(g_mutex);
+                        auto it = g_shaderHashes.find(ShaderKey{device, info.stage.module});
+                        if (it != g_shaderHashes.end())
+                            shaderHash = it->second;
+                    }
+                    uint64_t layoutHash = 0;
+                    {
+                        std::lock_guard lock(g_mutex);
+                        auto it = g_pipelineLayoutHashes.find(PipelineLayoutKey{device, info.layout});
+                        if (it != g_pipelineLayoutHashes.end())
+                            layoutHash = it->second;
+                    }
+                    std::fprintf(file,
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"stage\":\"%s\",\"flags\":%u}",
+                        static_cast<unsigned long long>(layoutHash),
+                        static_cast<unsigned long long>(shaderHash),
+                        static_cast<unsigned long long>(HashSpecializationInfo(info.stage.pSpecializationInfo)),
+                        ShaderStageName(info.stage.stage),
+                        info.flags);
+                }
+                std::fprintf(file, "]}\n");
+                std::fclose(file);
+            }
+        }
+    }
 
     return dispatch.CreateComputePipelines(
         device, pipelineCache, createInfoCount, createInfos, allocator, pipelines);
@@ -704,6 +1088,14 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceProcAddr);
     if (std::strcmp(name, "vkDestroyDevice") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDevice);
+    if (std::strcmp(name, "vkCreateDescriptorSetLayout") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorSetLayout);
+    if (std::strcmp(name, "vkDestroyDescriptorSetLayout") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout);
+    if (std::strcmp(name, "vkCreatePipelineLayout") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineLayout);
+    if (std::strcmp(name, "vkDestroyPipelineLayout") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineLayout);
     if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
