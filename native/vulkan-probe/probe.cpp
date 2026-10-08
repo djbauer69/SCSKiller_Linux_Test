@@ -1,6 +1,7 @@
 #include <vulkan/vulkan.h>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <vector>
 
 namespace
@@ -18,12 +19,13 @@ bool Check(VkResult result, const char* operation)
 
 int main(int argc, char** argv)
 {
-    if (argc > 2)
+    const bool graphicsMode = argc >= 2 && std::string(argv[1]) == "--graphics";
+    if ((!graphicsMode && argc > 2) || (graphicsMode && argc != 4))
     {
-        std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n";
+        std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
+                  << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n";
         return 1;
     }
-
 
     uint32_t apiVersion = VK_API_VERSION_1_0;
     if (vkEnumerateInstanceVersion(&apiVersion) != VK_SUCCESS)
@@ -195,7 +197,271 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (argc == 2)
+    if (graphicsMode)
+    {
+        auto readSpirv = [](const char* path, std::vector<uint32_t>& output) -> bool
+        {
+            std::ifstream shaderFile(path, std::ios::binary | std::ios::ate);
+            if (!shaderFile)
+                return false;
+
+            const std::streamsize byteCount = shaderFile.tellg();
+            if (byteCount <= 0 || byteCount % sizeof(uint32_t) != 0)
+                return false;
+
+            shaderFile.seekg(0, std::ios::beg);
+            output.resize(static_cast<size_t>(byteCount) / sizeof(uint32_t));
+            return shaderFile.read(
+                reinterpret_cast<char*>(output.data()), byteCount).good();
+        };
+
+        std::vector<uint32_t> vertexCode;
+        std::vector<uint32_t> fragmentCode;
+        if (!readSpirv(argv[2], vertexCode) || !readSpirv(argv[3], fragmentCode))
+        {
+            std::cerr << "Could not read graphics shader SPIR-V\\n";
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        VkShaderModuleCreateInfo vertexShaderInfo{
+            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            nullptr,
+            0,
+            vertexCode.size() * sizeof(uint32_t),
+            vertexCode.data()
+        };
+        VkShaderModuleCreateInfo fragmentShaderInfo{
+            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            nullptr,
+            0,
+            fragmentCode.size() * sizeof(uint32_t),
+            fragmentCode.data()
+        };
+
+        VkShaderModule vertexShader = VK_NULL_HANDLE;
+        VkShaderModule fragmentShader = VK_NULL_HANDLE;
+        if (!Check(vkCreateShaderModule(
+                       device, &vertexShaderInfo, nullptr, &vertexShader),
+                   "vkCreateShaderModule(vertex)") ||
+            !Check(vkCreateShaderModule(
+                       device, &fragmentShaderInfo, nullptr, &fragmentShader),
+                   "vkCreateShaderModule(fragment)"))
+        {
+            if (vertexShader)
+                vkDestroyShaderModule(device, vertexShader, nullptr);
+            vkDestroyShaderModule(device, fragmentShader, nullptr);
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        VkAttachmentDescription colorAttachment{
+            0,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_STORE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+        VkAttachmentReference colorReference{
+            0,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+        VkSubpassDescription subpass{
+            0,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            0,
+            nullptr,
+            1,
+            &colorReference,
+            nullptr,
+            nullptr,
+            0,
+            nullptr
+        };
+        VkRenderPassCreateInfo renderPassInfo{
+            VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            nullptr,
+            0,
+            1,
+            &colorAttachment,
+            1,
+            &subpass,
+            0,
+            nullptr
+        };
+
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        if (!Check(vkCreateRenderPass(
+                       device, &renderPassInfo, nullptr, &renderPass),
+                   "vkCreateRenderPass"))
+        {
+            vkDestroyShaderModule(device, fragmentShader, nullptr);
+            vkDestroyShaderModule(device, vertexShader, nullptr);
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        VkPipelineShaderStageCreateInfo stages[2]{
+            {
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                nullptr,
+                0,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                vertexShader,
+                "main",
+                nullptr
+            },
+            {
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                nullptr,
+                0,
+                VK_SHADER_STAGE_FRAGMENT_BIT,
+                fragmentShader,
+                "main",
+                nullptr
+            }
+        };
+
+        VkPipelineVertexInputStateCreateInfo vertexInput{
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            0,
+            nullptr,
+            0,
+            nullptr
+        };
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            VK_FALSE
+        };
+        VkViewport viewport{0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
+        VkRect2D scissor{{0, 0}, {1, 1}};
+        VkPipelineViewportStateCreateInfo viewportState{
+            VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            1,
+            &viewport,
+            1,
+            &scissor
+        };
+        VkPipelineRasterizationStateCreateInfo rasterization{
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_FALSE,
+            VK_FALSE,
+            VK_POLYGON_MODE_FILL,
+            VK_CULL_MODE_NONE,
+            VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            VK_FALSE,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f
+        };
+        VkPipelineMultisampleStateCreateInfo multisample{
+            VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_FALSE,
+            1.0f,
+            nullptr,
+            VK_FALSE,
+            VK_FALSE
+        };
+        VkPipelineColorBlendAttachmentState blendAttachment{
+            VK_FALSE,
+            VK_BLEND_FACTOR_ONE,
+            VK_BLEND_FACTOR_ZERO,
+            VK_BLEND_OP_ADD,
+            VK_BLEND_FACTOR_ONE,
+            VK_BLEND_FACTOR_ZERO,
+            VK_BLEND_OP_ADD,
+            VK_COLOR_COMPONENT_R_BIT |
+                VK_COLOR_COMPONENT_G_BIT |
+                VK_COLOR_COMPONENT_B_BIT |
+                VK_COLOR_COMPONENT_A_BIT
+        };
+        VkPipelineColorBlendStateCreateInfo colorBlend{
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_FALSE,
+            VK_LOGIC_OP_COPY,
+            1,
+            &blendAttachment,
+            {0.0f, 0.0f, 0.0f, 0.0f}
+        };
+
+        VkGraphicsPipelineCreateInfo graphicsInfo{
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            nullptr,
+            0,
+            2,
+            stages,
+            &vertexInput,
+            &inputAssembly,
+            nullptr,
+            &viewportState,
+            &rasterization,
+            &multisample,
+            nullptr,
+            &colorBlend,
+            nullptr,
+            pipelineLayout,
+            renderPass,
+            0,
+            VK_NULL_HANDLE,
+            -1
+        };
+
+        VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+        if (!Check(vkCreateGraphicsPipelines(
+                       device, pipelineCache, 1, &graphicsInfo, nullptr, &graphicsPipeline),
+                   "vkCreateGraphicsPipelines"))
+        {
+            vkDestroyRenderPass(device, renderPass, nullptr);
+            vkDestroyShaderModule(device, fragmentShader, nullptr);
+            vkDestroyShaderModule(device, vertexShader, nullptr);
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        std::cout << "Graphics pipeline and render-pass hooks exercised successfully\\n";
+
+        vkDestroyPipeline(device, graphicsPipeline, nullptr);
+        vkDestroyRenderPass(device, renderPass, nullptr);
+        vkDestroyShaderModule(device, fragmentShader, nullptr);
+        vkDestroyShaderModule(device, vertexShader, nullptr);
+    }
+
+    if (argc == 2 && !graphicsMode)
     {
         std::ifstream shaderFile(argv[1], std::ios::binary | std::ios::ate);
         if (!shaderFile)
