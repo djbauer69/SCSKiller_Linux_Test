@@ -134,7 +134,7 @@ jobs:
           test -s build/vulkan-smoke/warmed.cache.bin
       - name: Replay driver cache through Vulkan layer
         env:
-          VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/implicit_layer.d
+          VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
           LD_LIBRARY_PATH: ${{ github.workspace }}/build/vulkan-install/lib
           VK_INSTANCE_LAYERS: VK_LAYER_SCSKILLER
           NODEVICE_SELECT: "1"
