@@ -28,6 +28,10 @@ jobs:
         run: cmake -S native/vulkan-probe -B build/vulkan-probe -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build Vulkan probe
         run: cmake --build build/vulkan-probe
+      - name: Configure Vulkan warmer
+        run: cmake -S native/vulkan-warmer -B build/vulkan-warmer -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build Vulkan warmer
+        run: cmake --build build/vulkan-warmer
       - name: Install Vulkan layer for loader smoke test
         run: cmake --install build/vulkan-layer --prefix build/vulkan-install
       - name: Compile Vulkan smoke shader
@@ -55,3 +59,7 @@ jobs:
           grep -q '"event":"pipeline_layout_create"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"pipeline_cache_snapshot"' build/vulkan-smoke/capture.jsonl
+      - name: Replay captured compute pipeline with Vulkan warmer
+        run: |
+          build/vulkan-warmer/scskiller-vulkan-warmer             build/vulkan-smoke/capture.jsonl             build/vulkan-smoke/warmed.cache.bin
+          test -s build/vulkan-smoke/warmed.cache.bin
