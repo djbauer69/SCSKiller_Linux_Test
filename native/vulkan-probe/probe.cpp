@@ -1,4 +1,5 @@
 #include <vulkan/vulkan.h>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -15,8 +16,15 @@ bool Check(VkResult result, const char* operation)
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc > 2)
+    {
+        std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n";
+        return 1;
+    }
+
+
     uint32_t apiVersion = VK_API_VERSION_1_0;
     if (vkEnumerateInstanceVersion(&apiVersion) != VK_SUCCESS)
     {
@@ -169,8 +177,149 @@ int main()
         return 1;
     }
 
-    std::cout << "Logical device and pipeline-layout hooks exercised successfully\n";
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+    VkPipelineCacheCreateInfo cacheInfo{
+        VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        nullptr,
+        0,
+        0,
+        nullptr
+    };
+    if (!Check(vkCreatePipelineCache(device, &cacheInfo, nullptr, &pipelineCache),
+               "vkCreatePipelineCache"))
+    {
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 1;
+    }
 
+    if (argc == 2)
+    {
+        std::ifstream shaderFile(argv[1], std::ios::binary | std::ios::ate);
+        if (!shaderFile)
+        {
+            std::cerr << "Could not open compute shader: " << argv[1] << "\n";
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        const std::streamsize byteCount = shaderFile.tellg();
+        if (byteCount <= 0 || byteCount % sizeof(uint32_t) != 0)
+        {
+            std::cerr << "Compute shader size is not a positive SPIR-V word multiple\n";
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        shaderFile.seekg(0, std::ios::beg);
+        std::vector<uint32_t> shaderCode(static_cast<size_t>(byteCount) / sizeof(uint32_t));
+        if (!shaderFile.read(reinterpret_cast<char*>(shaderCode.data()), byteCount))
+        {
+            std::cerr << "Could not read compute shader\n";
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        VkShaderModuleCreateInfo shaderInfo{
+            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            nullptr,
+            0,
+            shaderCode.size() * sizeof(uint32_t),
+            shaderCode.data()
+        };
+        VkShaderModule shaderModule = VK_NULL_HANDLE;
+        if (!Check(vkCreateShaderModule(device, &shaderInfo, nullptr, &shaderModule),
+                   "vkCreateShaderModule"))
+        {
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        VkPipelineShaderStageCreateInfo stageInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            shaderModule,
+            "main",
+            nullptr
+        };
+        VkComputePipelineCreateInfo computeInfo{
+            VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            nullptr,
+            0,
+            stageInfo,
+            pipelineLayout,
+            VK_NULL_HANDLE,
+            -1
+        };
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (!Check(vkCreateComputePipelines(
+                       device, pipelineCache, 1, &computeInfo, nullptr, &pipeline),
+                   "vkCreateComputePipelines"))
+        {
+            vkDestroyShaderModule(device, shaderModule, nullptr);
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        std::cout << "Compute pipeline hook exercised successfully\n";
+        vkDestroyPipeline(device, pipeline, nullptr);
+        vkDestroyShaderModule(device, shaderModule, nullptr);
+    }
+
+    size_t cacheSize = 0;
+    if (!Check(vkGetPipelineCacheData(device, pipelineCache, &cacheSize, nullptr),
+               "vkGetPipelineCacheData(size)"))
+    {
+        vkDestroyPipelineCache(device, pipelineCache, nullptr);
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 1;
+    }
+
+    if (cacheSize > 0)
+    {
+        std::vector<uint8_t> cacheData(cacheSize);
+        if (!Check(vkGetPipelineCacheData(device, pipelineCache, &cacheSize, cacheData.data()),
+                   "vkGetPipelineCacheData(data)"))
+        {
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+    }
+
+    std::cout << "Logical device, pipeline layout, and pipeline-cache hooks exercised successfully\n";
+
+    vkDestroyPipelineCache(device, pipelineCache, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
     vkDestroyDevice(device, nullptr);
