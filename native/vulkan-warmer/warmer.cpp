@@ -39,6 +39,49 @@ struct PushConstantRecord
     uint32_t size = 0;
 };
 
+struct RenderPassAttachmentRecord
+{
+    VkAttachmentDescription description{};
+};
+
+struct RenderPassReferenceRecord
+{
+    uint32_t attachment = VK_ATTACHMENT_UNUSED;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+};
+
+struct RenderPassSubpassRecord
+{
+    VkSubpassDescriptionFlags flags = 0;
+    VkPipelineBindPoint pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    std::vector<RenderPassReferenceRecord> inputAttachments;
+    std::vector<RenderPassReferenceRecord> colorAttachments;
+    std::vector<RenderPassReferenceRecord> resolveAttachments;
+    bool hasDepthStencil = false;
+    RenderPassReferenceRecord depthStencil;
+    std::vector<uint32_t> preserveAttachments;
+};
+
+struct RenderPassDependencyRecord
+{
+    uint32_t srcSubpass = VK_SUBPASS_EXTERNAL;
+    uint32_t dstSubpass = VK_SUBPASS_EXTERNAL;
+    VkPipelineStageFlags srcStageMask = 0;
+    VkPipelineStageFlags dstStageMask = 0;
+    VkAccessFlags srcAccessMask = 0;
+    VkAccessFlags dstAccessMask = 0;
+    VkDependencyFlags dependencyFlags = 0;
+};
+
+struct RenderPassRecord
+{
+    VkRenderPassCreateFlags flags = 0;
+    bool replayCompatible = false;
+    std::vector<RenderPassAttachmentRecord> attachments;
+    std::vector<RenderPassSubpassRecord> subpasses;
+    std::vector<RenderPassDependencyRecord> dependencies;
+};
+
 struct PipelineLayoutRecord
 {
     VkPipelineLayoutCreateFlags flags = 0;
@@ -68,6 +111,7 @@ struct Recording
     std::unordered_map<uint64_t, ShaderRecord> shaders;
     std::unordered_map<uint64_t, DescriptorLayoutRecord> descriptorLayouts;
     std::unordered_map<uint64_t, PipelineLayoutRecord> pipelineLayouts;
+    std::unordered_map<uint64_t, RenderPassRecord> renderPasses;
     std::vector<ComputePipelineRecord> computePipelines;
     size_t graphicsPipelines = 0;
     size_t rayTracingPipelines = 0;
@@ -520,6 +564,176 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
             continue;
         }
 
+        if (event == "render_pass_create")
+        {
+            if (!FindHex(line, "hash", hash))
+                continue;
+
+            RenderPassRecord record;
+            uint64_t value = 0;
+            FindUnsigned(line, "flags", value);
+            record.flags = static_cast<VkRenderPassCreateFlags>(value);
+
+            std::string compatible;
+            size_t compatibleStart = 0;
+            if (FindToken(line, "replay_compatible", compatibleStart))
+            {
+                record.replayCompatible = line.substr(compatibleStart, 4) == "true";
+            }
+
+            std::string_view attachments;
+            if (!ExtractArray(line, "attachments", attachments))
+            {
+                error = "render_pass_create is missing attachments";
+                return false;
+            }
+
+            for (const auto attachmentText : SplitArray(attachments))
+            {
+                const std::string entry = Trim(std::string(attachmentText));
+                if (entry.empty())
+                    continue;
+
+                RenderPassAttachmentRecord attachment;
+                if (!FindUnsigned(entry, "flags", value)) return false;
+                attachment.description.flags = static_cast<VkAttachmentDescriptionFlags>(value);
+                if (!FindUnsigned(entry, "format", value)) return false;
+                attachment.description.format = static_cast<VkFormat>(value);
+                if (!FindUnsigned(entry, "samples", value)) return false;
+                attachment.description.samples = static_cast<VkSampleCountFlagBits>(value);
+                if (!FindUnsigned(entry, "load_op", value)) return false;
+                attachment.description.loadOp = static_cast<VkAttachmentLoadOp>(value);
+                if (!FindUnsigned(entry, "store_op", value)) return false;
+                attachment.description.storeOp = static_cast<VkAttachmentStoreOp>(value);
+                if (!FindUnsigned(entry, "stencil_load_op", value)) return false;
+                attachment.description.stencilLoadOp = static_cast<VkAttachmentLoadOp>(value);
+                if (!FindUnsigned(entry, "stencil_store_op", value)) return false;
+                attachment.description.stencilStoreOp = static_cast<VkAttachmentStoreOp>(value);
+                if (!FindUnsigned(entry, "initial_layout", value)) return false;
+                attachment.description.initialLayout = static_cast<VkImageLayout>(value);
+                if (!FindUnsigned(entry, "final_layout", value)) return false;
+                attachment.description.finalLayout = static_cast<VkImageLayout>(value);
+                record.attachments.push_back(attachment);
+            }
+
+            std::string_view subpasses;
+            if (!ExtractArray(line, "subpasses", subpasses))
+            {
+                error = "render_pass_create is missing subpasses";
+                return false;
+            }
+
+            for (const auto subpassText : SplitArray(subpasses))
+            {
+                const std::string entry = Trim(std::string(subpassText));
+                if (entry.empty())
+                    continue;
+
+                RenderPassSubpassRecord subpass;
+                if (!FindUnsigned(entry, "flags", value)) return false;
+                subpass.flags = static_cast<VkSubpassDescriptionFlags>(value);
+                if (!FindUnsigned(entry, "pipeline_bind_point", value)) return false;
+                subpass.pipelineBindPoint = static_cast<VkPipelineBindPoint>(value);
+
+                auto parseRefs = [&](std::string_view key, std::vector<RenderPassReferenceRecord>& output) -> bool
+                {
+                    std::string_view refs;
+                    if (!ExtractArray(entry, key, refs))
+                        return false;
+                    for (const auto refText : SplitArray(refs))
+                    {
+                        const std::string refEntry = Trim(std::string(refText));
+                        if (refEntry.empty())
+                            continue;
+                        RenderPassReferenceRecord reference;
+                        uint64_t refValue = 0;
+                        if (!FindUnsigned(refEntry, "attachment", refValue)) return false;
+                        reference.attachment = static_cast<uint32_t>(refValue);
+                        if (!FindUnsigned(refEntry, "layout", refValue)) return false;
+                        reference.layout = static_cast<VkImageLayout>(refValue);
+                        output.push_back(reference);
+                    }
+                    return true;
+                };
+
+                if (!parseRefs("input_attachments", subpass.inputAttachments) ||
+                    !parseRefs("color_attachments", subpass.colorAttachments) ||
+                    !parseRefs("resolve_attachments", subpass.resolveAttachments))
+                {
+                    error = "render_pass_create has invalid attachment references";
+                    return false;
+                }
+
+                size_t depthStart = 0;
+                if (!FindToken(entry, "depth_stencil", depthStart))
+                    return false;
+                while (depthStart < entry.size() && std::isspace(static_cast<unsigned char>(entry[depthStart])))
+                    ++depthStart;
+                if (depthStart < entry.size() && entry[depthStart] == '{')
+                {
+                    std::string_view depth;
+                    if (!ExtractObject(entry, "depth_stencil", depth))
+                        return false;
+                    uint64_t refValue = 0;
+                    if (!FindUnsigned(depth, "attachment", refValue)) return false;
+                    subpass.depthStencil.attachment = static_cast<uint32_t>(refValue);
+                    if (!FindUnsigned(depth, "layout", refValue)) return false;
+                    subpass.depthStencil.layout = static_cast<VkImageLayout>(refValue);
+                    subpass.hasDepthStencil = true;
+                }
+
+                std::string_view preserve;
+                if (!ExtractArray(entry, "preserve_attachments", preserve))
+                    return false;
+                for (const auto preserveText : SplitArray(preserve))
+                {
+                    const std::string item = Trim(std::string(preserveText));
+                    if (item.empty()) continue;
+                    if (!FindUnsigned(item, "value", value))
+                    {
+                        try { subpass.preserveAttachments.push_back(
+                            static_cast<uint32_t>(std::stoull(item))); }
+                        catch (...) { return false; }
+                    }
+                }
+
+                record.subpasses.push_back(std::move(subpass));
+            }
+
+            std::string_view dependencies;
+            if (!ExtractArray(line, "dependencies", dependencies))
+            {
+                error = "render_pass_create is missing dependencies";
+                return false;
+            }
+            for (const auto dependencyText : SplitArray(dependencies))
+            {
+                const std::string entry = Trim(std::string(dependencyText));
+                if (entry.empty())
+                    continue;
+
+                RenderPassDependencyRecord dependency;
+                if (!FindUnsigned(entry, "src_subpass", value)) return false;
+                dependency.srcSubpass = static_cast<uint32_t>(value);
+                if (!FindUnsigned(entry, "dst_subpass", value)) return false;
+                dependency.dstSubpass = static_cast<uint32_t>(value);
+                if (!FindUnsigned(entry, "src_stage_mask", value)) return false;
+                dependency.srcStageMask = static_cast<VkPipelineStageFlags>(value);
+                if (!FindUnsigned(entry, "dst_stage_mask", value)) return false;
+                dependency.dstStageMask = static_cast<VkPipelineStageFlags>(value);
+                if (!FindUnsigned(entry, "src_access_mask", value)) return false;
+                dependency.srcAccessMask = static_cast<VkAccessFlags>(value);
+                if (!FindUnsigned(entry, "dst_access_mask", value)) return false;
+                dependency.dstAccessMask = static_cast<VkAccessFlags>(value);
+                if (!FindUnsigned(entry, "dependency_flags", value)) return false;
+                dependency.dependencyFlags = static_cast<VkDependencyFlags>(value);
+                record.dependencies.push_back(dependency);
+            }
+
+            recording.renderPasses[hash] = std::move(record);
+            continue;
+        }
+
         if (event == "compute_pipeline_state")
         {
             std::string_view pipelines;
@@ -695,6 +909,7 @@ int Run(const std::string& recordingPath,
     std::cout << "Shaders: " << recording.shaders.size()
               << ", descriptor layouts: " << recording.descriptorLayouts.size()
               << ", pipeline layouts: " << recording.pipelineLayouts.size()
+              << ", render passes: " << recording.renderPasses.size()
               << ", compute pipelines: " << recording.computePipelines.size()
               << ", graphics pipelines skipped: " << recording.graphicsPipelines
               << ", ray-tracing pipelines skipped: " << recording.rayTracingPipelines << "\\n";
