@@ -1600,8 +1600,7 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
          std::strcmp(name, "vkEnumeratePhysicalDevices") == 0 ||
          std::strcmp(name, "vkCreateDevice") == 0))
     {
-        std::fprintf(stderr, "[SCSKiller Vulkan] GIPA %s
-", name);
+        std::fprintf(stderr, "[SCSKiller Vulkan] GIPA %s\n", name);
     }
 
     if (std::strcmp(name, "vkNegotiateLoaderLayerInterfaceVersion") == 0)
