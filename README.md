@@ -39,6 +39,12 @@
   <img src=".github/assets/library.webp" alt="SCSKiller's library: games grouped by store, with shader and pipeline counts, cache size, compile time, a status such as Needs rebuilding or Warmed, and Play buttons.">
 </p>
 
+
+> [!NOTE]
+> **Experimental Linux port:** the `linux-vulkan-proton` branch is an experimental community port. It is not a replacement for the Windows release yet. The current work targets native Vulkan plus Proton's vkd3d-proton and DXVK paths, with a common Vulkan runtime recorder and a future Qt/Kirigami UI.
+>
+> See [LINUX.md](LINUX.md) for the architecture and current implementation status.
+
 ## Why
 
 A game that meets a new effect has the GPU driver compile its shader on the spot, and the frame waits: that's shader
