@@ -781,7 +781,7 @@ bool ParseGraphicsPipelineState(
         std::string_view vertexInput;
         if (ExtractObject(entry, "vertex_input", vertexInput))
         {
-            record.hasViewportState = record.hasViewportState;
+            record.hasVertexInput = true;
             uint64_t flags = 0;
             FindUnsigned(vertexInput, "flags", flags);
 
@@ -835,6 +835,7 @@ bool ParseGraphicsPipelineState(
         std::string_view inputAssembly;
         if (ExtractObject(entry, "input_assembly", inputAssembly))
         {
+            record.hasInputAssembly = true;
             if (!FindUnsigned(inputAssembly, "topology", value)) return false;
             record.topology = static_cast<VkPrimitiveTopology>(value);
             bool primitiveRestart = false;
@@ -2058,6 +2059,352 @@ int Run(const std::string& recordingPath,
             std::cerr << "Compute pipeline replay failed: " << result << "\\n";
         }
     }
+
+
+    size_t graphicsSucceeded = 0;
+    size_t graphicsSkipped = 0;
+    size_t graphicsFailed = 0;
+
+    for (const auto& record : recording.graphicsPipelinesToReplay)
+    {
+        if (!record.replayCompatible)
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: capture contains unsupported state\n";
+            continue;
+        }
+
+        const auto layoutIt = pipelineLayouts.find(record.layoutHash);
+        const auto renderPassIt = renderPasses.find(record.renderPassHash);
+        if (layoutIt == pipelineLayouts.end() ||
+            renderPassIt == renderPasses.end() ||
+            record.stages.empty())
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: missing layout, render pass, or shader stage\n";
+            continue;
+        }
+
+        if (record.basePipelineIndex >= 0)
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: derivative base-pipeline replay is not yet supported\n";
+            continue;
+        }
+
+        bool dynamicViewport = false;
+        bool dynamicScissor = false;
+        for (const VkDynamicState state : record.dynamicStates)
+        {
+            dynamicViewport |= state == VK_DYNAMIC_STATE_VIEWPORT;
+            dynamicScissor |= state == VK_DYNAMIC_STATE_SCISSOR;
+        }
+
+        if (!record.hasVertexInput ||
+            !record.hasInputAssembly ||
+            !record.hasRasterization ||
+            !record.hasMultisample ||
+            !record.hasViewportState)
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: required fixed-function state was not captured\n";
+            continue;
+        }
+
+        if ((!dynamicViewport &&
+             record.viewports.size() != record.viewportCount) ||
+            (!dynamicScissor &&
+             record.scissors.size() != record.scissorCount))
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: static viewport/scissor data is incomplete\n";
+            continue;
+        }
+
+        const auto& renderPassRecordIt = recording.renderPasses.find(record.renderPassHash);
+        if (renderPassRecordIt == recording.renderPasses.end() ||
+            record.subpass >= renderPassRecordIt->second.subpasses.size())
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: render-pass subpass is unavailable\n";
+            continue;
+        }
+
+        const auto& subpassRecord = renderPassRecordIt->second.subpasses[record.subpass];
+        const bool needsDepthStencil = subpassRecord.hasDepthStencil;
+        const bool needsColorBlend = !subpassRecord.colorAttachments.empty();
+
+        if ((needsDepthStencil && !record.hasDepthStencil) ||
+            (needsColorBlend && !record.hasColorBlend))
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: attachment-dependent state is incomplete\n";
+            continue;
+        }
+
+        std::vector<VkPipelineShaderStageCreateInfo> stages;
+        stages.reserve(record.stages.size());
+        std::vector<VkSpecializationInfo> specializations(record.stages.size());
+        for (size_t i = 0; i < record.stages.size(); ++i)
+        {
+            const auto& source = record.stages[i];
+            const auto shaderIt = shaderModules.find(source.moduleHash);
+            if (shaderIt == shaderModules.end())
+            {
+                stages.clear();
+                break;
+            }
+
+            VkSpecializationInfo* specializationInfo = nullptr;
+            if (source.specialization.present)
+            {
+                specializations[i].mapEntryCount =
+                    static_cast<uint32_t>(source.specialization.mapEntries.size());
+                specializations[i].pMapEntries = source.specialization.mapEntries.data();
+                specializations[i].dataSize = source.specialization.data.size();
+                specializations[i].pData = source.specialization.data.data();
+                specializationInfo = &specializations[i];
+            }
+
+            stages.push_back(VkPipelineShaderStageCreateInfo{
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                nullptr,
+                source.flags,
+                source.stage,
+                shaderIt->second,
+                source.entryPoint.c_str(),
+                specializationInfo
+            });
+        }
+
+        if (stages.size() != record.stages.size())
+        {
+            ++graphicsSkipped;
+            std::cerr << "Skipping graphics pipeline: one or more shader modules are unavailable\n";
+            continue;
+        }
+
+        std::vector<VkVertexInputBindingDescription> bindings;
+        bindings.reserve(record.vertexBindings.size());
+        for (const auto& binding : record.vertexBindings)
+            bindings.push_back({
+                binding.binding,
+                binding.stride,
+                binding.inputRate
+            });
+
+        std::vector<VkVertexInputAttributeDescription> attributes;
+        attributes.reserve(record.vertexAttributes.size());
+        for (const auto& attribute : record.vertexAttributes)
+            attributes.push_back({
+                attribute.location,
+                attribute.binding,
+                attribute.format,
+                attribute.offset
+            });
+
+        VkPipelineVertexInputStateCreateInfo vertexInput{
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            static_cast<uint32_t>(bindings.size()),
+            bindings.data(),
+            static_cast<uint32_t>(attributes.size()),
+            attributes.data()
+        };
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.topology,
+            record.primitiveRestartEnable
+        };
+
+        std::vector<VkViewport> viewports;
+        viewports.reserve(record.viewports.size());
+        for (const auto& value : record.viewports)
+            viewports.push_back({
+                value.x,
+                value.y,
+                value.width,
+                value.height,
+                value.minDepth,
+                value.maxDepth
+            });
+
+        std::vector<VkRect2D> scissors;
+        scissors.reserve(record.scissors.size());
+        for (const auto& value : record.scissors)
+            scissors.push_back({
+                {value.offsetX, value.offsetY},
+                {value.width, value.height}
+            });
+
+        VkPipelineViewportStateCreateInfo viewportState{
+            VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.viewportCount,
+            dynamicViewport ? nullptr : viewports.data(),
+            record.scissorCount,
+            dynamicScissor ? nullptr : scissors.data()
+        };
+
+        VkPipelineRasterizationStateCreateInfo rasterization{
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.depthClampEnable,
+            record.rasterizerDiscardEnable,
+            record.polygonMode,
+            record.cullMode,
+            record.frontFace,
+            record.depthBiasEnable,
+            record.depthBiasConstantFactor,
+            record.depthBiasClamp,
+            record.depthBiasSlopeFactor,
+            record.lineWidth
+        };
+
+        VkSampleMask* sampleMask = record.sampleMask.empty()
+            ? nullptr
+            : record.sampleMask.data();
+
+        VkPipelineMultisampleStateCreateInfo multisample{
+            VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.rasterizationSamples,
+            record.sampleShadingEnable,
+            record.minSampleShading,
+            sampleMask,
+            record.alphaToCoverageEnable,
+            record.alphaToOneEnable
+        };
+
+        VkStencilOpState frontStencil{
+            record.frontStencil.failOp,
+            record.frontStencil.passOp,
+            record.frontStencil.depthFailOp,
+            record.frontStencil.compareOp,
+            record.frontStencil.compareMask,
+            record.frontStencil.writeMask,
+            record.frontStencil.reference
+        };
+        VkStencilOpState backStencil{
+            record.backStencil.failOp,
+            record.backStencil.passOp,
+            record.backStencil.depthFailOp,
+            record.backStencil.compareOp,
+            record.backStencil.compareMask,
+            record.backStencil.writeMask,
+            record.backStencil.reference
+        };
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.depthTestEnable,
+            record.depthWriteEnable,
+            record.depthCompareOp,
+            record.depthBoundsTestEnable,
+            record.stencilTestEnable,
+            frontStencil,
+            backStencil,
+            record.minDepthBounds,
+            record.maxDepthBounds
+        };
+
+        std::vector<VkPipelineColorBlendAttachmentState> blendAttachments;
+        blendAttachments.reserve(record.colorBlendAttachments.size());
+        for (const auto& attachment : record.colorBlendAttachments)
+        {
+            blendAttachments.push_back({
+                attachment.blendEnable,
+                attachment.srcColorBlendFactor,
+                attachment.dstColorBlendFactor,
+                attachment.colorBlendOp,
+                attachment.srcAlphaBlendFactor,
+                attachment.dstAlphaBlendFactor,
+                attachment.alphaBlendOp,
+                attachment.colorWriteMask
+            });
+        }
+
+        VkPipelineColorBlendStateCreateInfo colorBlend{
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.logicOpEnable,
+            record.logicOp,
+            static_cast<uint32_t>(blendAttachments.size()),
+            blendAttachments.data(),
+            {
+                record.blendConstants[0],
+                record.blendConstants[1],
+                record.blendConstants[2],
+                record.blendConstants[3]
+            }
+        };
+
+        VkPipelineDynamicStateCreateInfo dynamicState{
+            VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            static_cast<uint32_t>(record.dynamicStates.size()),
+            record.dynamicStates.data()
+        };
+
+        VkPipelineTessellationStateCreateInfo tessellation{
+            VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO,
+            nullptr,
+            0,
+            record.patchControlPoints
+        };
+
+        VkGraphicsPipelineCreateInfo graphicsInfo{
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            nullptr,
+            record.flags,
+            static_cast<uint32_t>(stages.size()),
+            stages.data(),
+            &vertexInput,
+            &inputAssembly,
+            record.hasTessellation ? &tessellation : nullptr,
+            &viewportState,
+            &rasterization,
+            &multisample,
+            record.hasDepthStencil ? &depthStencil : nullptr,
+            record.hasColorBlend ? &colorBlend : nullptr,
+            record.dynamicStates.empty() ? nullptr : &dynamicState,
+            layoutIt->second,
+            renderPassIt->second,
+            record.subpass,
+            VK_NULL_HANDLE,
+            -1
+        };
+
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        const VkResult result = vkCreateGraphicsPipelines(
+            context.device, context.cache, 1, &graphicsInfo, nullptr, &pipeline);
+        if (result == VK_SUCCESS)
+        {
+            ++graphicsSucceeded;
+            vkDestroyPipeline(context.device, pipeline, nullptr);
+        }
+        else
+        {
+            ++graphicsFailed;
+            std::cerr << "Graphics pipeline replay failed: " << result << "\n";
+        }
+    }
+
+    std::cout << "Graphics replay: requested " << recording.graphicsPipelinesToReplay.size()
+              << ", compiled " << graphicsSucceeded
+              << ", skipped " << graphicsSkipped
+              << ", failed " << graphicsFailed << "\n";
 
     size_t cacheSize = 0;
     std::vector<uint8_t> outputCache;
