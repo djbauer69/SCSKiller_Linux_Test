@@ -1012,6 +1012,38 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
     }
 }
 
+
+void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
+{
+    if (!RecordingEnabled())
+        return;
+
+    const char* path = RecordingPath();
+    if (!path || physicalDevice == VK_NULL_HANDLE)
+        return;
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+
+    char uuid[VK_UUID_SIZE * 2 + 1]{};
+    for (size_t i = 0; i < VK_UUID_SIZE; ++i)
+        std::snprintf(uuid + (i * 2), 3, "%02x", properties.pipelineCacheUUID[i]);
+
+    if (std::FILE* file = std::fopen(path, "ab"))
+    {
+        std::fprintf(file,
+            "{\"schema\":3,\"event\":\"physical_device_identity\",\"sequence\":%llu,\"vendor_id\":%u,\"device_id\":%u,\"driver_version\":%u,\"api_version\":%u,\"device_name\":\"%s\",\"pipeline_cache_uuid\":\"%s\"}\n",
+            static_cast<unsigned long long>(g_sequence.fetch_add(1)),
+            properties.vendorID,
+            properties.deviceID,
+            properties.driverVersion,
+            properties.apiVersion,
+            JsonEscape(properties.deviceName).c_str(),
+            uuid);
+        std::fclose(file);
+    }
+}
+
 void RecordCount(const char* event, uint64_t sequence, uint32_t count)
 {
     if (!RecordingEnabled())
@@ -1294,6 +1326,7 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
     VkResult result = createNext(physicalDevice, createInfo, allocator, device);
     if (result != VK_SUCCESS)
         return result;
+    RecordPhysicalDevice(physicalDevice);
 
     DeviceDispatch dispatch{};
     dispatch.GetDeviceProcAddr = next->pfnNextGetDeviceProcAddr;
