@@ -386,15 +386,17 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     if (it != g_shaderHashes.end())
                         shaderHash = it->second;
                 }
+                const auto specializationHash = HashSpecializationInfo(state.pSpecializationInfo);
                 std::fprintf(file,
-                    "{\"stage\":\"%s\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\"}",
+                    "{\"stage\":\"%s\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"specialization_data_size\":%zu}",
                     ShaderStageName(state.stage),
                     static_cast<unsigned long long>(shaderHash),
-                    static_cast<unsigned long long>(HashSpecializationInfo(state.pSpecializationInfo)));
+                    static_cast<unsigned long long>(specializationHash),
+                    state.pSpecializationInfo ? state.pSpecializationInfo->dataSize : 0);
             }
 
             std::fprintf(file,
-                "],\"flags\":%u,\"subpass\":%u}\n",
+                "],\"flags\":%u,\"subpass\":%u}",
                 info.flags, info.subpass);
         }
 
@@ -677,11 +679,26 @@ vkCreateDescriptorSetLayout(VkDevice device,
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
-                        "{\"schema\":2,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"bindings\":%u,\"flags\":%u}\n",
+                        "{\"schema\":2,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"bindings\":[",
                         static_cast<unsigned long long>(sequence),
                         static_cast<unsigned long long>(hash),
-                        createInfo ? createInfo->bindingCount : 0,
                         createInfo ? createInfo->flags : 0);
+                    if (createInfo)
+                    {
+                        for (uint32_t i = 0; i < createInfo->bindingCount; ++i)
+                        {
+                            if (i) std::fputc(',', file);
+                            const auto& binding = createInfo->pBindings[i];
+                            std::fprintf(file,
+                                "{\"binding\":%u,\"descriptor_type\":%u,\"descriptor_count\":%u,\"stage_flags\":%u,\"immutable_sampler_count\":%u}",
+                                binding.binding,
+                                binding.descriptorType,
+                                binding.descriptorCount,
+                                binding.stageFlags,
+                                binding.pImmutableSamplers ? binding.descriptorCount : 0);
+                        }
+                    }
+                    std::fprintf(file, "]}\n");
                     std::fclose(file);
                 }
             }
@@ -746,12 +763,40 @@ vkCreatePipelineLayout(VkDevice device,
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
-                        "{\"schema\":2,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"set_layouts\":%u,\"push_constants\":%u,\"flags\":%u}\n",
+                        "{\"schema\":2,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"set_layouts\":[",
                         static_cast<unsigned long long>(sequence),
                         static_cast<unsigned long long>(hash),
-                        createInfo ? createInfo->setLayoutCount : 0,
-                        createInfo ? createInfo->pushConstantRangeCount : 0,
                         createInfo ? createInfo->flags : 0);
+                    if (createInfo)
+                    {
+                        for (uint32_t i = 0; i < createInfo->setLayoutCount; ++i)
+                        {
+                            if (i) std::fputc(',', file);
+                            uint64_t layoutHash = 0;
+                            {
+                                std::lock_guard lock(g_mutex);
+                                auto it = g_descriptorLayoutHashes.find(
+                                    DescriptorLayoutKey{device, createInfo->pSetLayouts[i]});
+                                if (it != g_descriptorLayoutHashes.end())
+                                    layoutHash = it->second;
+                            }
+                            std::fprintf(file, "\"%016llx\"",
+                                         static_cast<unsigned long long>(layoutHash));
+                        }
+                    }
+                    std::fprintf(file, "],\"push_constants\":[");
+                    if (createInfo)
+                    {
+                        for (uint32_t i = 0; i < createInfo->pushConstantRangeCount; ++i)
+                        {
+                            if (i) std::fputc(',', file);
+                            const auto& range = createInfo->pPushConstantRanges[i];
+                            std::fprintf(file,
+                                "{\"stage_flags\":%u,\"offset\":%u,\"size\":%u}",
+                                range.stageFlags, range.offset, range.size);
+                        }
+                    }
+                    std::fprintf(file, "]}\n");
                     std::fclose(file);
                 }
             }
@@ -925,11 +970,13 @@ vkCreateComputePipelines(VkDevice device,
                         if (it != g_pipelineLayoutHashes.end())
                             layoutHash = it->second;
                     }
+                    const auto specializationHash = HashSpecializationInfo(info.stage.pSpecializationInfo);
                     std::fprintf(file,
-                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"stage\":\"%s\",\"flags\":%u}",
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"specialization_data_size\":%zu,\"stage\":\"%s\",\"flags\":%u}",
                         static_cast<unsigned long long>(layoutHash),
                         static_cast<unsigned long long>(shaderHash),
-                        static_cast<unsigned long long>(HashSpecializationInfo(info.stage.pSpecializationInfo)),
+                        static_cast<unsigned long long>(specializationHash),
+                        info.stage.pSpecializationInfo ? info.stage.pSpecializationInfo->dataSize : 0,
                         ShaderStageName(info.stage.stage),
                         info.flags);
                 }
