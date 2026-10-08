@@ -1711,6 +1711,13 @@ int Run(const std::string& recordingPath,
         1,
         &priority
     };
+
+    // Enable every core Vulkan 1.0 feature exposed by the selected device.
+    // This avoids artificially disabling capabilities that the captured
+    // pipeline may have relied upon in the original application.
+    VkPhysicalDeviceFeatures availableFeatures{};
+    vkGetPhysicalDeviceFeatures(context.physicalDevice, &availableFeatures);
+
     VkDeviceCreateInfo deviceInfo{
         VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         nullptr,
@@ -1721,7 +1728,7 @@ int Run(const std::string& recordingPath,
         nullptr,
         0,
         nullptr,
-        nullptr
+        &availableFeatures
     };
     if (!Check(vkCreateDevice(context.physicalDevice, &deviceInfo, nullptr, &context.device),
                "vkCreateDevice"))
