@@ -16,10 +16,13 @@ Current event types:
 - render_pass_create
 - pipeline_cache_snapshot
 - pipeline_cache_replay
+- physical_device_identity
 
 ## Replayable state
 
 Shader-module code is stored as Base64 SPIR-V so the standalone Vulkan warmer can recreate shader modules without access to the original game process.
+
+A physical_device_identity event records the Vulkan vendor/device IDs, driver version, API version, device name, and pipeline-cache UUID observed by the application. The warmer uses the vendor/device IDs and UUID to prefer the corresponding physical device when multiple Vulkan devices are present.
 
 Descriptor-set layouts and pipeline layouts are serialized using capture-stable hashes and their core state. Immutable sampler bindings are recorded but are currently rejected by the standalone warmer because sampler objects are not reconstructed yet.
 
