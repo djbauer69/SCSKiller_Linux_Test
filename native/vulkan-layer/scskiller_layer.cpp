@@ -810,6 +810,7 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetPhysicalDeviceProcAddr(
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
 {
+    Debug("vkNegotiateLoaderLayerInterfaceVersion");
     if (!versionStruct)
         return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -823,6 +824,7 @@ vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
     versionStruct->pfnGetInstanceProcAddr = vkGetInstanceProcAddr;
     versionStruct->pfnGetDeviceProcAddr = vkGetDeviceProcAddr;
     versionStruct->pfnGetPhysicalDeviceProcAddr = vkGetPhysicalDeviceProcAddr;
+    Debug("loader interface negotiated");
     return VK_SUCCESS;
 }
 
@@ -1581,6 +1583,15 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
 {
     if (!name)
         return nullptr;
+
+    if (DebugEnabled() &&
+        (std::strcmp(name, "vkCreateInstance") == 0 ||
+         std::strcmp(name, "vkGetInstanceProcAddr") == 0 ||
+         std::strcmp(name, "vkEnumeratePhysicalDevices") == 0 ||
+         std::strcmp(name, "vkCreateDevice") == 0))
+    {
+        std::fprintf(stderr, "[SCSKiller Vulkan] GIPA %s\\n", name);
+    }
 
     if (std::strcmp(name, "vkNegotiateLoaderLayerInterfaceVersion") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkNegotiateLoaderLayerInterfaceVersion);
