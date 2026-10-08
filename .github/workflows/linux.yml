@@ -1,0 +1,30 @@
+name: Linux
+
+on:
+  push:
+    branches: [ linux-vulkan-proton ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan development files
+        run: sudo apt-get update && sudo apt-get install -y libvulkan-dev cmake ninja-build
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Build managed Linux projects
+        run: dotnet build src/SCSKiller.Graphics/SCSKiller.Graphics.csproj -c Release
+      - name: Build Linux CLI
+        run: dotnet build src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release
+      - name: Configure native Vulkan layer
+        run: cmake -S native/vulkan-layer -B build/vulkan-layer -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build native Vulkan layer
+        run: cmake --build build/vulkan-layer
+      - name: Configure Vulkan probe
+        run: cmake -S native/vulkan-probe -B build/vulkan-probe -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build Vulkan probe
+        run: cmake --build build/vulkan-probe
