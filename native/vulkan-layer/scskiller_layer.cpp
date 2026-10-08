@@ -154,8 +154,8 @@ uint64_t HandleBits(T handle)
 {
     if constexpr (std::is_pointer_v<T>)
         return reinterpret_cast<uintptr_t>(handle);
-
-    return static_cast<uint64_t>(handle);
+    else
+        return static_cast<uint64_t>(handle);
 }
 
 uint64_t HashDescriptorSetLayoutCreateInfo(const VkDescriptorSetLayoutCreateInfo* info)
