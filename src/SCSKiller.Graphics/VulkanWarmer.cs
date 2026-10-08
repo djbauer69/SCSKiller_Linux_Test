@@ -38,16 +38,14 @@ public static class VulkanWarmer
 
         psi.ArgumentList.Add(options.RecordingPath);
 
-        if (!string.IsNullOrWhiteSpace(options.InputCachePath))
-            psi.ArgumentList.Add(options.InputCachePath);
-
         if (!string.IsNullOrWhiteSpace(options.OutputCachePath))
         {
-            if (string.IsNullOrWhiteSpace(options.InputCachePath))
-                throw new ArgumentException(
-                    "An input-cache argument is required when an output-cache argument is supplied.");
-
+            psi.ArgumentList.Add(options.InputCachePath ?? "-");
             psi.ArgumentList.Add(options.OutputCachePath);
+        }
+        else if (!string.IsNullOrWhiteSpace(options.InputCachePath))
+        {
+            psi.ArgumentList.Add(options.InputCachePath);
         }
 
         using var process = new System.Diagnostics.Process { StartInfo = psi };
