@@ -244,6 +244,31 @@ const char* ShaderStageName(VkShaderStageFlagBits stage)
     }
 }
 
+void RecordSpecialization(FILE* file, const VkSpecializationInfo* info)
+{
+    if (!info)
+    {
+        std::fprintf(file, "null");
+        return;
+    }
+
+    std::fprintf(file, "{\"hash\":\"%016llx\",\"data_size\":%zu,\"map_entries\":[",
+                 static_cast<unsigned long long>(HashSpecializationInfo(info)),
+                 info->dataSize);
+    for (uint32_t i = 0; i < info->mapEntryCount; ++i)
+    {
+        if (i) std::fputc(',', file);
+        const auto& entry = info->pMapEntries[i];
+        std::fprintf(file,
+            "{\"constant_id\":%u,\"offset\":%zu,\"size\":%zu}",
+            entry.constantID, entry.offset, entry.size);
+    }
+    std::fprintf(file, "],\"data_base64\":\"%s\"}",
+        info->pData && info->dataSize
+            ? Base64(static_cast<const uint8_t*>(info->pData), info->dataSize).c_str()
+            : "");
+}
+
 std::string Base64(const uint8_t* data, size_t size)
 {
     static constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -388,11 +413,13 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 }
                 const auto specializationHash = HashSpecializationInfo(state.pSpecializationInfo);
                 std::fprintf(file,
-                    "{\"stage\":\"%s\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"specialization_data_size\":%zu}",
+                    "{\"stage\":\"%s\",\"stage_flags\":%u,\"module_hash\":\"%016llx\",\"entry_point\":\"%s\",\"specialization\":",
                     ShaderStageName(state.stage),
+                    state.flags,
                     static_cast<unsigned long long>(shaderHash),
-                    static_cast<unsigned long long>(specializationHash),
-                    state.pSpecializationInfo ? state.pSpecializationInfo->dataSize : 0);
+                    state.pName ? state.pName : "main");
+                RecordSpecialization(file, state.pSpecializationInfo);
+                std::fputc('}', file);
             }
 
             std::fprintf(file,
@@ -884,8 +911,11 @@ vkCreateShaderModule(VkDevice device,
     if (hash != 0)
     {
         const auto sequence = g_sequence.fetch_add(1);
-        RecordShader("shader_module_create", sequence, hash, wordCount);
-        RecordShaderCode(sequence, hash, createInfo->pCode, wordCount);
+        if (result == VK_SUCCESS)
+        {
+            RecordShader("shader_module_create", sequence, hash, wordCount);
+            RecordShaderCode(sequence, hash, createInfo->pCode, wordCount);
+        }
     }
 
     return result;
@@ -970,14 +1000,16 @@ vkCreateComputePipelines(VkDevice device,
                         if (it != g_pipelineLayoutHashes.end())
                             layoutHash = it->second;
                     }
-                    const auto specializationHash = HashSpecializationInfo(info.stage.pSpecializationInfo);
                     std::fprintf(file,
-                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"specialization_hash\":\"%016llx\",\"specialization_data_size\":%zu,\"stage\":\"%s\",\"flags\":%u}",
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"specialization\":",
                         static_cast<unsigned long long>(layoutHash),
                         static_cast<unsigned long long>(shaderHash),
-                        static_cast<unsigned long long>(specializationHash),
-                        info.stage.pSpecializationInfo ? info.stage.pSpecializationInfo->dataSize : 0,
+                        info.stage.flags,
                         ShaderStageName(info.stage.stage),
+                        info.stage.pName ? info.stage.pName : "main");
+                    RecordSpecialization(file, info.stage.pSpecializationInfo);
+                    std::fprintf(file,
+                        ",\"flags\":%u}",
                         info.flags);
                 }
                 std::fprintf(file, "]}\n");
