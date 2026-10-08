@@ -286,6 +286,7 @@ VkLayerDeviceCreateInfo* FindDeviceLinkInfo(const VkDeviceCreateInfo* createInfo
 
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char*);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char*);
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetPhysicalDeviceProcAddr(VkInstance, const char*);
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
@@ -302,7 +303,7 @@ vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* versionStruct)
     versionStruct->loaderLayerInterfaceVersion = 2;
     versionStruct->pfnGetInstanceProcAddr = vkGetInstanceProcAddr;
     versionStruct->pfnGetDeviceProcAddr = vkGetDeviceProcAddr;
-    versionStruct->pfnGetPhysicalDeviceProcAddr = nullptr;
+    versionStruct->pfnGetPhysicalDeviceProcAddr = vkGetPhysicalDeviceProcAddr;
     return VK_SUCCESS;
 }
 
@@ -746,4 +747,14 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceLayerProperties);
 
     return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
+}
+
+
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vkGetPhysicalDeviceProcAddr(VkInstance instance, const char* name)
+{
+    if (!name || !g_nextInstanceProcAddr)
+        return nullptr;
+
+    return g_nextInstanceProcAddr(instance, name);
 }
