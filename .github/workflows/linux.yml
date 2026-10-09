@@ -233,11 +233,11 @@ jobs:
             ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d \
             build/vulkan-smoke/managed-\"native\"-capture.jsonl \
             build/vulkan-smoke/compute.spv
-          test -s build/vulkan-smoke/managed-"native"-capture.jsonl
-          cat build/vulkan-smoke/managed-"native"-capture.jsonl
-          grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/managed-"native"-capture.jsonl
+          test -s build/vulkan-smoke/managed-\"native\"-capture.jsonl
+          cat build/vulkan-smoke/managed-\"native\"-capture.jsonl
+          grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/managed-\"native\"-capture.jsonl
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
-            inspect-vulkan build/vulkan-smoke/managed-"native"-capture.jsonl > build/vulkan-smoke/managed-inspect.log
+            inspect-vulkan build/vulkan-smoke/managed-\"native\"-capture.jsonl > build/vulkan-smoke/managed-inspect.log
           grep -q 'Compute pipelines: 1' build/vulkan-smoke/managed-inspect.log
       - name: Stage and smoke-test Linux package
         env:
