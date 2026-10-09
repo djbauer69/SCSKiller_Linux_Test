@@ -798,11 +798,13 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     renderPassHash = it->second;
             }
 
+            const bool basePipelineHandlePresent = info.basePipelineHandle != VK_NULL_HANDLE;
             std::fprintf(file,
-                "],\"flags\":%u,\"subpass\":%u,\"base_pipeline_index\":%d,\"render_pass_hash\":\"%016llx\",\"render_pass_present\":%s",
+                "],\"flags\":%u,\"subpass\":%u,\"base_pipeline_index\":%d,\"base_pipeline_handle_present\":%s,\"render_pass_hash\":\"%016llx\",\"render_pass_present\":%s",
                 info.flags,
                 info.subpass,
                 info.basePipelineIndex,
+                basePipelineHandlePresent ? "true" : "false",
                 static_cast<unsigned long long>(renderPassHash),
                 info.renderPass != VK_NULL_HANDLE ? "true" : "false");
 
@@ -869,7 +871,8 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 }
             }
             const bool replayCompatible =
-                pipelinePnextSupported && info.basePipelineIndex < 0;
+                pipelinePnextSupported && info.basePipelineIndex < 0 &&
+                !basePipelineHandlePresent;
             std::fprintf(file,
                 ",\"pipeline_pnext_present\":%s,\"pipeline_pnext_compatible\":%s,\"replay_compatible\":%s",
                 pipelinePnextPresent ? "true" : "false",
