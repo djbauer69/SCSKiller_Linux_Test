@@ -50,11 +50,21 @@ cmake -S "$ROOT/native/vulkan-warmer" \
 cmake --build "$BUILD_ROOT/vulkan-warmer" --parallel
 cmake --install "$BUILD_ROOT/vulkan-warmer" --prefix "$STAGE"
 
-printf '[3/4] Publishing the managed Linux CLI...\n'
+case "$(uname -m)" in
+    x86_64|amd64) RID="linux-x64" ;;
+    aarch64|arm64) RID="linux-arm64" ;;
+    *)
+        printf 'Unsupported package architecture: %s\n' "$(uname -m)" >&2
+        exit 2
+        ;;
+esac
+
+printf '[3/4] Publishing the self-contained Linux CLI for %s...\n' "$RID"
 dotnet publish "$ROOT/src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj" \
     --configuration "$CONFIG" \
+    --runtime "$RID" \
     --output "$STAGE/libexec/cli" \
-    --self-contained false
+    --self-contained true
 
 printf '[4/4] Adding launcher and documentation...\n'
 cat > "$STAGE/bin/scskiller-linux" <<'LAUNCHER'
@@ -66,7 +76,7 @@ export SCSKILLER_HOME="$PREFIX"
 export SCSKILLER_VK_LAYER_DIR="$PREFIX/share/vulkan/explicit_layer.d"
 export VK_LAYER_PATH="$SCSKILLER_VK_LAYER_DIR${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
 export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec dotnet "$PREFIX/libexec/cli/scskiller-linux.dll" "$@"
+exec "$PREFIX/libexec/cli/scskiller-linux" "$@"
 LAUNCHER
 chmod 0755 "$STAGE/bin/scskiller-linux"
 
@@ -85,4 +95,4 @@ printf 'version=%s\nconfiguration=%s\n' "$VERSION" "$CONFIG" \
 
 printf '\nPackage staged at:\n  %s\n' "$STAGE"
 printf 'Launcher:\n  %s/bin/scskiller-linux\n' "$STAGE"
-printf 'Required at runtime: .NET 10 runtime and a working Vulkan loader/driver.\n'
+printf 'Required at runtime: a working Vulkan loader and GPU driver/ICD. The managed CLI runtime is bundled.\n'
