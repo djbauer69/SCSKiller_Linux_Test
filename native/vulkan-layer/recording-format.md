@@ -11,6 +11,7 @@ Current event types:
 - compute_pipeline_create
 - compute_pipeline_state
 - ray_tracing_pipeline_create
+- ray_tracing_pipeline_state
 - descriptor_set_layout_create
 - pipeline_layout_create
 - render_pass_create
@@ -51,6 +52,8 @@ Graphics pipeline state records:
 The standalone warmer replays classic render-pass graphics pipelines and Vulkan 1.3 dynamic-rendering graphics pipelines whose core state is fully reconstructible from this recording. Dynamic-rendering replay requires the selected physical device to expose and enable the core dynamicRendering feature. The recorder walks the complete root pNext chain and accepts only dynamic-rendering state and output-only creation feedback that the warmer can safely omit. Any unrecognized chain node marks the pipeline non-replayable rather than guessing at extension state. Pipelines with unrecorded extension pNext state and graphics pipeline derivatives using either basePipelineIndex or an existing basePipelineHandle are skipped because their creation relationship is not reconstructed as a batch.
 
 Compute pipeline state records the compute shader hash, specialization data, pipeline-layout hash, stage flags, and pipeline flags. It also records shader-stage pNext state, top-level pipeline pNext presence/compatibility, and base-pipeline dependencies. The dynamic-rendering `pnext_present` subfield is informational about whether the root chain continues after the rendering node; compatibility is determined from the full chain's per-node classification. Unknown top-level structures are marked non-replayable; `VkPipelineCreationFeedbackCreateInfo` is treated as output-only metadata and may be omitted during replay. Compute pipelines that derive from a base pipeline by either `basePipelineIndex` or `basePipelineHandle` are marked non-replayable until their dependency can be recreated correctly. The managed planner exposes specific `unsupported-pipeline-pnext` and `compute-pipeline-derivative-requires-base-pipeline` reasons when these semantics are not reconstructible.
+
+Ray-tracing creation emits both the historical `ray_tracing_pipeline_create` count event and a `ray_tracing_pipeline_state` detail event keyed by process ID and sequence. The detail event captures stage names/module hashes/entry points/specialization data, shader-group indices/types, recursion depth, base-pipeline dependencies, pNext structure-type IDs, library-interface metadata, and dynamic states for diagnostics. These records are **not replayable yet**: the standalone warmer does not reconstruct ray-tracing pipeline libraries, shader groups, acceleration-structure interfaces, or the full ray-tracing extension object graph. The managed reader matches detailed and count events by `(process_id, sequence)` to prevent double-counting, while older count-only captures remain supported.
 
 ## Driver-owned pipeline cache snapshots
 
