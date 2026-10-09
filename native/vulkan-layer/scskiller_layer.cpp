@@ -2137,6 +2137,8 @@ vkCreateComputePipelines(VkDevice device,
                     }
                     const bool stagePnextPresent = info.stage.pNext != nullptr;
                     const bool pipelinePnextPresent = info.pNext != nullptr;
+                    const bool basePipelineHandlePresent = info.basePipelineHandle != VK_NULL_HANDLE;
+                    const bool basePipelineIndexPresent = info.basePipelineIndex >= 0;
                     bool pipelinePnextCompatible = true;
                     for (const auto* pipelineNode = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
                          pipelineNode;
@@ -2151,9 +2153,10 @@ vkCreateComputePipelines(VkDevice device,
                         }
                     }
                     const bool replayCompatible =
-                        layoutReplayCompatible && !stagePnextPresent && pipelinePnextCompatible;
+                        layoutReplayCompatible && !stagePnextPresent && pipelinePnextCompatible &&
+                        !basePipelineHandlePresent && !basePipelineIndexPresent;
                     std::fprintf(file,
-                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"stage_pnext_present\":%s,\"pipeline_pnext_present\":%s,\"pipeline_pnext_compatible\":%s,\"replay_compatible\":%s,\"specialization\":",
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"stage_pnext_present\":%s,\"pipeline_pnext_present\":%s,\"pipeline_pnext_compatible\":%s,\"base_pipeline_handle_present\":%s,\"base_pipeline_index\":%d,\"replay_compatible\":%s,\"specialization\":",
                         static_cast<unsigned long long>(layoutHash),
                         static_cast<unsigned long long>(shaderHash),
                         info.stage.flags,
@@ -2162,6 +2165,8 @@ vkCreateComputePipelines(VkDevice device,
                         stagePnextPresent ? "true" : "false",
                         pipelinePnextPresent ? "true" : "false",
                         pipelinePnextCompatible ? "true" : "false",
+                        basePipelineHandlePresent ? "true" : "false",
+                        info.basePipelineIndex,
                         replayCompatible ? "true" : "false");
                     RecordSpecialization(file, info.stage.pSpecializationInfo);
                     std::fprintf(file,
