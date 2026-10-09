@@ -9,7 +9,7 @@ find_package(KF6Kirigami REQUIRED)
 
 qt_standard_project_setup()
 
-qt_add_executable(scskiller-kde main.cpp)
+qt_add_executable(scskiller-kde main.cpp BackendController.cpp BackendController.h)
 
 qt_add_qml_module(scskiller-kde
     URI SCSKiller.Kde
