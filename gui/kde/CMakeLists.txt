@@ -24,3 +24,11 @@ target_link_libraries(scskiller-kde PRIVATE
     Qt6::Quick
     KF6::Kirigami
 )
+
+include(GNUInstallDirs)
+install(TARGETS scskiller-kde
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES scskiller-kde.desktop
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications
+)
