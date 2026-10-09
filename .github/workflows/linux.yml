@@ -299,7 +299,7 @@ jobs:
           PY
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             inspect-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl > build/vulkan-smoke/ray-tracing-inspect.log
-          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2)' build/vulkan-smoke/ray-tracing-inspect.log
+          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2; stages: 0, groups: 0, libraries referenced: 0)' build/vulkan-smoke/ray-tracing-inspect.log
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             plan-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl > build/vulkan-smoke/ray-tracing-plan.log
           grep -q 'Pipeline plan: 3 total; 1 replayable; 2 unsupported' build/vulkan-smoke/ray-tracing-plan.log
@@ -386,7 +386,8 @@ jobs:
           PY
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             inspect-vulkan build/vulkan-smoke/ray-tracing-detailed-capture.jsonl > build/vulkan-smoke/ray-tracing-detailed-inspect.log
-          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2)' build/vulkan-smoke/ray-tracing-detailed-inspect.log
+          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2; stages: 2, groups: 2, libraries referenced: 0)' build/vulkan-smoke/ray-tracing-detailed-inspect.log
+          grep -q 'stages=1 [raygen] groups=1 recursion=1 libraries=0' build/vulkan-smoke/ray-tracing-detailed-inspect.log
           grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/ray-tracing-detailed-inspect.log
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             plan-vulkan build/vulkan-smoke/ray-tracing-detailed-capture.jsonl > build/vulkan-smoke/ray-tracing-detailed-plan.log
