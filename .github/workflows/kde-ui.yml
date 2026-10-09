@@ -64,6 +64,8 @@ jobs:
       - name: Install staged KDE package into a clean user home
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: "1"
+          QML_IMPORT_TRACE: "1"
         run: |
           install_home="${GITHUB_WORKSPACE}/build/package-install-home"
           HOME="$install_home" \
