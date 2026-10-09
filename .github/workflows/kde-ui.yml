@@ -10,6 +10,7 @@ on:
       - "src/SCSKiller.Graphics/**"
       - "src/SCSKiller.Linux.Cli/**"
       - "scripts/package-linux.sh"
+      - "scripts/install-user-package.sh"
       - "README.md"
       - "LINUX.md"
       - "LICENSE"
@@ -59,6 +60,36 @@ jobs:
           test -x build/package-kde/bin/scskiller-kde
           test -s build/package-kde/share/applications/scskiller-kde.desktop
           test -s build/package-kde/share/doc/scskiller-linux/LICENSE
+          test -x build/package-kde/install-user-package.sh
+      - name: Install staged KDE package into a clean user home
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          install_home="${GITHUB_WORKSPACE}/build/package-install-home"
+          HOME="$install_home" \
+            DEST="$install_home/.local/opt/scskiller-linux" \
+            BIN_DIR="$install_home/.local/bin" \
+            APPLICATIONS_DIR="$install_home/.local/share/applications" \
+            bash build/package-kde/install-user-package.sh "$GITHUB_WORKSPACE/build/package-kde"
+          install_root="$install_home/.local/opt/scskiller-linux"
+          test -x "$install_root/bin/scskiller-linux"
+          test -x "$install_root/bin/scskiller-kde"
+          test -L "$install_home/.local/bin/scskiller-linux"
+          grep -F "Exec=\"$install_root/bin/scskiller-kde\"" "$install_home/.local/share/applications/scskiller-kde.desktop"
+          "$install_home/.local/bin/scskiller-linux" help
+          set +e
+          timeout 8s "$install_root/bin/scskiller-kde" > build/kde-installed-smoke.log 2>&1
+          status=$?
+          set -e
+          cat build/kde-installed-smoke.log
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "Installed KDE UI exited unexpectedly with status $status" >&2
+            exit 1
+          fi
+          if grep -Eiq 'module .* is not installed|type .* unavailable|referenceerror|failed to load .*qml|cannot assign to non-existent property' build/kde-installed-smoke.log; then
+            echo "Installed QML runtime loading reported an error" >&2
+            exit 1
+          fi
       - name: Upload KDE-enabled Linux package
         uses: actions/upload-artifact@v4
         with:
