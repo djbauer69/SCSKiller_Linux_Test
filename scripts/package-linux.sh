@@ -88,6 +88,7 @@ install -m 0644 "$ROOT/native/vulkan-layer/recording-format.md" \
 install -m 0644 "$ROOT/LICENSE" "$STAGE/share/doc/scskiller-linux/LICENSE"
 install -m 0644 "$ROOT/LICENSE-EXCEPTION.txt" "$STAGE/share/doc/scskiller-linux/LICENSE-EXCEPTION.txt"
 install -m 0644 "$ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/share/doc/scskiller-linux/THIRD-PARTY-NOTICES.md"
+install -m 0755 "$ROOT/scripts/install-user-package.sh" "$STAGE/install-user-package.sh"
 
 if [[ "$BUILD_KDE_UI" == "1" ]]; then
     printf '[optional] Building and installing the Qt/Kirigami desktop app...\n'
