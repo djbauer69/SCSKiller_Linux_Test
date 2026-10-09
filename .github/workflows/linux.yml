@@ -141,6 +141,19 @@ jobs:
           cat build/vulkan-smoke/dynamic-replay.log
           test -s build/vulkan-smoke/dynamic-graphics-warmed.cache.bin
           grep -q 'Graphics replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/dynamic-replay.log
+      - name: Inspect graphics recordings and shader correlations
+        run: |
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/graphics-capture.jsonl > build/vulkan-smoke/graphics-inspect.log
+          cat build/vulkan-smoke/graphics-inspect.log
+          grep -q 'Graphics pipelines: 1' build/vulkan-smoke/graphics-inspect.log
+          grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/graphics-inspect.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/dynamic-graphics-capture.jsonl > build/vulkan-smoke/dynamic-graphics-inspect.log
+          cat build/vulkan-smoke/dynamic-graphics-inspect.log
+          grep -q 'dynamic rendering: 1' build/vulkan-smoke/dynamic-graphics-inspect.log
+          grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/dynamic-graphics-inspect.log
+
       - name: Inspect captured Vulkan recording via the managed CLI
         run: |
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
