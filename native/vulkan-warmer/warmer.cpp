@@ -103,6 +103,8 @@ struct ComputePipelineRecord
     uint64_t layoutHash = 0;
     uint64_t moduleHash = 0;
     bool replayCompatible = true;
+    bool basePipelineHandlePresent = false;
+    int32_t basePipelineIndex = -1;
     VkPipelineCreateFlags flags = 0;
     VkPipelineShaderStageCreateFlags stageFlags = 0;
     std::string entryPoint = "main";
@@ -184,6 +186,7 @@ struct GraphicsPipelineRecord
     VkPipelineCreateFlags flags = 0;
     uint32_t subpass = 0;
     int32_t basePipelineIndex = -1;
+    bool basePipelineHandlePresent = false;
     std::vector<GraphicsStageRecord> stages;
 
     bool hasVertexInput = false;
@@ -762,6 +765,9 @@ bool ParseGraphicsPipelineState(
         int64_t signedValue = -1;
         if (FindSigned(entry, "base_pipeline_index", signedValue))
             record.basePipelineIndex = static_cast<int32_t>(signedValue);
+        FindBool(entry, "base_pipeline_handle_present", record.basePipelineHandlePresent);
+        if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
+            record.replayCompatible = false;
 
         bool compatible = true;
         if (FindBool(entry, "replay_compatible", compatible))
@@ -1555,6 +1561,12 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
                 bool stagePnextPresent = false;
                 if (FindBool(entry, "stage_pnext_present", stagePnextPresent) && stagePnextPresent)
                     pipeline.replayCompatible = false;
+                FindBool(entry, "base_pipeline_handle_present", pipeline.basePipelineHandlePresent);
+                int64_t basePipelineIndex = -1;
+                if (FindSigned(entry, "base_pipeline_index", basePipelineIndex))
+                    pipeline.basePipelineIndex = static_cast<int32_t>(basePipelineIndex);
+                if (pipeline.basePipelineHandlePresent || pipeline.basePipelineIndex >= 0)
+                    pipeline.replayCompatible = false;
                 if (!FindUnsigned(entry, "flags", value))
                     return false;
                 pipeline.flags = static_cast<VkPipelineCreateFlags>(value);
@@ -2195,7 +2207,10 @@ int Run(const std::string& recordingPath,
         if (!record.replayCompatible)
         {
             ++skipped;
-            std::cerr << "Skipping compute pipeline: shader-stage or resource-layout pNext state is not fully captured\n";
+            if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
+                std::cerr << "Skipping compute pipeline: its base-pipeline dependency is not reconstructed\n";
+            else
+                std::cerr << "Skipping compute pipeline: shader-stage, pipeline pNext, or resource-layout state is not fully captured\n";
             continue;
         }
 
@@ -2263,7 +2278,10 @@ int Run(const std::string& recordingPath,
         if (!record.replayCompatible)
         {
             ++graphicsSkipped;
-            std::cerr << "Skipping graphics pipeline: capture contains unsupported state\n";
+            if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
+                std::cerr << "Skipping graphics pipeline: its base-pipeline dependency is not reconstructed\n";
+            else
+                std::cerr << "Skipping graphics pipeline: capture contains unsupported state\n";
             continue;
         }
 
@@ -2291,10 +2309,10 @@ int Run(const std::string& recordingPath,
             continue;
         }
 
-        if (record.basePipelineIndex >= 0)
+        if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
         {
             ++graphicsSkipped;
-            std::cerr << "Skipping graphics pipeline: derivative base-pipeline replay is not yet supported\n";
+            std::cerr << "Skipping graphics pipeline: its base-pipeline dependency is not reconstructed\n";
             continue;
         }
 
