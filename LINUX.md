@@ -72,6 +72,14 @@ Install a C++ toolchain and the package build dependencies, then build the stage
 
 The SDK package provides .NET 10 for the managed CLI; Vulkan headers and the loader are used to build the layer and warmer. The graphics driver/ICD must also be installed for the user's GPU. The optional CI smoke-shader compiler is available in the `shaderc` package (`glslc`), but is not required by the packaging script itself.
 
+For a pacman-managed install on CachyOS/Arch, use the experimental PKGBUILD in [packaging/arch](packaging/arch/README.md). It installs the CLI and KDE application under `/opt/scskiller-linux` with `scskiller-linux`/`scskiller-kde` launchers and a desktop entry:
+
+    sudo pacman -S --needed base-devel git
+    cd packaging/arch
+    makepkg -si
+
+The PKGBUILD is a rolling VCS recipe that builds the `linux-vulkan-proton` branch; it is not an official Arch repository package.
+
 ## Build a local Linux package
 
 On a development machine with CMake, Ninja, .NET 10 SDK, Vulkan development headers, and the Vulkan loader installed:
