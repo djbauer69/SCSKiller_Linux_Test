@@ -99,8 +99,12 @@ public static class VulkanProcessRecorder
     private static string PrependEnvironmentPath(string variableName, string value)
     {
         var existing = Environment.GetEnvironmentVariable(variableName);
-        return string.IsNullOrWhiteSpace(existing)
-            ? value
+        if (string.IsNullOrWhiteSpace(existing))
+            return value;
+
+        var entries = existing.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        return entries.Contains(value, StringComparer.Ordinal)
+            ? existing
             : $"{value}{Path.PathSeparator}{existing}";
     }
 }
