@@ -23,7 +23,7 @@ Current event types:
 
 Shader-module code is stored as Base64 SPIR-V so the standalone Vulkan warmer can recreate shader modules without access to the original game process.
 
-A physical_device_identity event records the Vulkan vendor/device IDs, driver version, API version, device name, and pipeline-cache UUID observed by the application. The warmer uses the vendor/device IDs and UUID to prefer the corresponding physical device when multiple Vulkan devices are present.
+A physical_device_identity event records the Vulkan vendor/device IDs, driver version, API version, device name, and pipeline-cache UUID observed by the application. JSONL append events are protected by both an in-process mutex and an OS file lock so concurrent game processes can safely share the same recording path. The warmer uses the vendor/device IDs and UUID to prefer the corresponding physical device when multiple Vulkan devices are present.
 
 Descriptor-set layouts and pipeline layouts are serialized using capture-stable hashes and their core state, with explicit replay-compatibility flags. Any unrecorded pNext state marks that layout non-replayable; compatibility propagates from descriptor-set layouts to pipeline layouts so dependent pipelines are skipped rather than compiled against an approximate interface. Immutable sampler bindings are likewise rejected because sampler objects are not reconstructed yet.
 
@@ -52,10 +52,10 @@ Compute pipeline state records the compute shader hash, specialization data, pip
 
 ## Driver-owned pipeline cache snapshots
 
-When the application calls vkGetPipelineCacheData, the layer can persist the returned driver-owned cache blob beside the JSONL file:
+When the application calls vkGetPipelineCacheData, the layer can persist the returned driver-owned cache blob beside the JSONL file. Snapshot names include the writer process ID and event sequence so multiple game processes do not overwrite each other's cache files:
 
     capture.jsonl
-    capture.jsonl.cache.42.bin
+    capture.jsonl.cache.12345.42.bin
 
 The JSONL event points at the binary snapshot. The cache remains opaque; SCSKiller does not parse or modify vendor cache internals.
 
