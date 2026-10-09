@@ -669,6 +669,7 @@ void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data,
 
         if (written == size)
         {
+            const std::string escapedPath = JsonEscape(path);
             if (std::FILE* log = std::fopen(base, "ab"))
             {
                 std::fprintf(log,
@@ -676,7 +677,7 @@ void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data,
                     event,
                     static_cast<unsigned long long>(sequence),
                     size,
-                    path);
+                    escapedPath.c_str());
                 std::fclose(log);
             }
         }
