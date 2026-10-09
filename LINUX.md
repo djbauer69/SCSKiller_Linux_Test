@@ -110,7 +110,7 @@ To see which individual pipeline descriptions are currently reconstructible, run
 
     scskiller-linux plan-vulkan capture.jsonl
 
-The planner splits the capture into replayable and unsupported pipelines and prints concrete incompatibility reasons, such as missing SPIR-V bytes, unsupported pNext state, an incompatible resource layout, or a render pass that cannot be reconstructed. This is a preflight report; the native warmer's actual driver compilation totals are still authoritative.
+The planner splits the capture into replayable and unsupported pipelines, prints a stable content ID and capture position for each pipeline, and lists concrete incompatibility reasons such as missing SPIR-V bytes, unsupported pNext state, an incompatible resource layout, or a render pass that cannot be reconstructed. IDs are based on the captured pipeline-state JSON, so identical state can share an ID; the capture sequence/index distinguishes its occurrence in a recording. This is a preflight report; the native warmer's actual driver compilation totals are still authoritative.
 
 By default, `warm-vulkan` reports skipped pipelines but exits successfully if Vulkan itself completed without a pipeline-creation error. Add `--require-complete` when you need a strict pass/fail result: the command returns a nonzero status if any compute/graphics pipeline was skipped or failed, the output summary is missing, or ray-tracing pipelines remain unsupported.
 
