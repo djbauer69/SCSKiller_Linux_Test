@@ -1963,7 +1963,7 @@ vkCreateComputePipelines(VkDevice device,
             if (std::FILE* file = std::fopen(path, "ab"))
             {
                 std::fprintf(file,
-                    "{\"schema\":2,\"event\":\"compute_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+                    "{\"schema\":3,\"event\":\"compute_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
                     static_cast<unsigned long long>(sequence), createInfoCount);
                 for (uint32_t i = 0; i < createInfoCount; ++i)
                 {
@@ -1977,19 +1977,28 @@ vkCreateComputePipelines(VkDevice device,
                             shaderHash = it->second;
                     }
                     uint64_t layoutHash = 0;
+                    bool layoutReplayCompatible = false;
                     {
                         std::lock_guard lock(g_mutex);
-                        auto it = g_pipelineLayoutHashes.find(PipelineLayoutKey{device, info.layout});
-                        if (it != g_pipelineLayoutHashes.end())
-                            layoutHash = it->second;
+                        const PipelineLayoutKey key{device, info.layout};
+                        auto hashIt = g_pipelineLayoutHashes.find(key);
+                        if (hashIt != g_pipelineLayoutHashes.end())
+                            layoutHash = hashIt->second;
+                        auto compatibilityIt = g_pipelineLayoutReplayCompatible.find(key);
+                        if (compatibilityIt != g_pipelineLayoutReplayCompatible.end())
+                            layoutReplayCompatible = compatibilityIt->second;
                     }
+                    const bool stagePnextPresent = info.stage.pNext != nullptr;
+                    const bool replayCompatible = layoutReplayCompatible && !stagePnextPresent;
                     std::fprintf(file,
-                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"specialization\":",
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"stage_pnext_present\":%s,\"replay_compatible\":%s,\"specialization\":",
                         static_cast<unsigned long long>(layoutHash),
                         static_cast<unsigned long long>(shaderHash),
                         info.stage.flags,
                         ShaderStageName(info.stage.stage),
-                        info.stage.pName ? info.stage.pName : "main");
+                        info.stage.pName ? info.stage.pName : "main",
+                        stagePnextPresent ? "true" : "false",
+                        replayCompatible ? "true" : "false");
                     RecordSpecialization(file, info.stage.pSpecializationInfo);
                     std::fprintf(file,
                         ",\"flags\":%u}",
