@@ -218,6 +218,15 @@ switch (args[0])
         Environment.ExitCode = 2;
         break;
 }
+static int ReadMetadataInt(PipelineDescription pipeline, string key)
+{
+    return pipeline.BackendMetadata is { } metadata &&
+           metadata.TryGetValue(key, out var value) &&
+           int.TryParse(value, out var parsed)
+        ? parsed
+        : 0;
+}
+
 static int PlanVulkanRecording(string path)
 {
     VulkanPipelinePlan plan;
@@ -344,10 +353,10 @@ static int InspectVulkanRecording(string path)
         metadata.TryGetValue("replay_compatible", out var value) &&
         value == "false");
 
-    var rayTracingPipelines = recording.Pipelines.Count(pipeline =>
+    var rayTracingPipelines = recording.Pipelines.Where(pipeline =>
         pipeline.BackendMetadata is { } metadata &&
         metadata.TryGetValue("pipeline_kind", out var kind) &&
-        kind == "ray-tracing");
+        kind == "ray-tracing").ToArray();
 
     Console.WriteLine($"Recording: {recording.RecordingPath}");
     Console.WriteLine(recording.Device is null
@@ -356,7 +365,23 @@ static int InspectVulkanRecording(string path)
     Console.WriteLine($"Unique captured SPIR-V modules: {shaders}");
     Console.WriteLine($"Compute pipelines: {computePipelines}");
     Console.WriteLine($"Graphics pipelines: {graphics.Length} (dynamic rendering: {dynamicRendering}, marked incompatible: {incompatibleGraphics})");
-    Console.WriteLine($"Ray-tracing pipelines: {rayTracingPipelines} (not replayable yet: {rayTracingPipelines})");
+    var totalRayTracingStages = rayTracingPipelines.Sum(pipeline =>
+        ReadMetadataInt(pipeline, "ray_tracing_stage_count"));
+    var totalRayTracingGroups = rayTracingPipelines.Sum(pipeline =>
+        ReadMetadataInt(pipeline, "ray_tracing_group_count"));
+    var totalRayTracingLibraries = rayTracingPipelines.Sum(pipeline =>
+        ReadMetadataInt(pipeline, "ray_tracing_library_count"));
+    Console.WriteLine($"Ray-tracing pipelines: {rayTracingPipelines.Length} (not replayable yet: {rayTracingPipelines.Length}; stages: {totalRayTracingStages}, groups: {totalRayTracingGroups}, libraries referenced: {totalRayTracingLibraries})");
+    foreach (var pipeline in rayTracingPipelines)
+    {
+        var metadata = pipeline.BackendMetadata!;
+        metadata.TryGetValue("pipeline_id", out var pipelineId);
+        metadata.TryGetValue("ray_tracing_stage_names", out var stageNames);
+        metadata.TryGetValue("ray_tracing_shader_hashes", out var shaderHashes);
+        metadata.TryGetValue("ray_tracing_replay_reason", out var replayReason);
+        Console.WriteLine(
+            $"  RT id={pipelineId ?? "unknown"} stages={ReadMetadataInt(pipeline, "ray_tracing_stage_count")} [{stageNames ?? string.Empty}] groups={ReadMetadataInt(pipeline, "ray_tracing_group_count")} recursion={ReadMetadataInt(pipeline, "ray_tracing_recursion_depth")} libraries={ReadMetadataInt(pipeline, "ray_tracing_library_count")} shaders=[{shaderHashes ?? string.Empty}] reason={replayReason ?? "ray-tracing-pipeline-replay-not-implemented"}");
+    }
     Console.WriteLine($"Driver cache injections/merges: {recording.CacheReplays}; skipped: {recording.CacheReplaySkips}");
     Console.WriteLine($"Pipelines with missing SPIR-V bytes: {recording.Pipelines.Count(pipeline => pipeline.BackendMetadata is { } metadata && metadata.TryGetValue("missing_shader_hashes", out var missing) && !string.IsNullOrEmpty(missing))}");
     Console.WriteLine("Events:");
