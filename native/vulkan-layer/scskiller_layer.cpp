@@ -61,6 +61,7 @@ struct DeviceDispatch
 };
 
 std::mutex g_mutex;
+std::mutex g_recordMutex;
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
 std::unordered_map<VkPhysicalDevice, VkInstance> g_physicalDeviceInstances;
 std::unordered_map<ShaderKey, uint64_t, ShaderKeyHash> g_shaderHashes;
@@ -384,6 +385,8 @@ void RecordRenderPassCreate(const VkRenderPassCreateInfo* info, uint64_t sequenc
     if (!path)
         return;
 
+    std::lock_guard recordLock(g_recordMutex);
+
     if (std::FILE* file = std::fopen(path, "ab"))
     {
         std::fprintf(file,
@@ -585,6 +588,7 @@ void RecordShaderCode(uint64_t sequence, uint64_t hash, const uint32_t* words, s
         return;
 
     const auto encoded = Base64(reinterpret_cast<const uint8_t*>(words), wordCount * sizeof(uint32_t));
+    std::lock_guard recordLock(g_recordMutex);
     if (std::FILE* file = std::fopen(path, "ab"))
     {
         std::fprintf(file,
@@ -604,6 +608,8 @@ void RecordShader(const char* event, uint64_t sequence, uint64_t hash, size_t wo
     const char* path = RecordingPath();
     if (!path)
         return;
+
+    std::lock_guard recordLock(g_recordMutex);
 
     if (std::FILE* file = std::fopen(path, "ab"))
     {
@@ -632,6 +638,10 @@ void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data,
     std::snprintf(path, sizeof(path), "%s.cache.%llu.bin",
                   base, static_cast<unsigned long long>(sequence));
 
+    // Keep the cache blob and its JSONL index entry paired, and serialize it
+    // with all other recorder writes so concurrent pipeline creation cannot
+    // interleave partial JSON objects.
+    std::lock_guard recordLock(g_recordMutex);
     if (std::FILE* file = std::fopen(path, "wb"))
     {
         const size_t written = std::fwrite(data, 1, size, file);
@@ -668,6 +678,8 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
     {
         std::fprintf(file, "%.9g", static_cast<double>(value));
     };
+
+    std::lock_guard recordLock(g_recordMutex);
 
     if (std::FILE* file = std::fopen(path, "ab"))
     {
@@ -1081,6 +1093,8 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
     for (size_t i = 0; i < VK_UUID_SIZE; ++i)
         std::snprintf(uuid + (i * 2), 3, "%02x", properties.pipelineCacheUUID[i]);
 
+    std::lock_guard recordLock(g_recordMutex);
+
     if (std::FILE* file = std::fopen(path, "ab"))
     {
         std::fprintf(file,
@@ -1106,6 +1120,8 @@ void RecordCount(const char* event, uint64_t sequence, uint32_t count)
     const char* path = RecordingPath();
     if (!path)
         return;
+
+    std::lock_guard recordLock(g_recordMutex);
 
     if (std::FILE* file = std::fopen(path, "ab"))
     {
@@ -1604,6 +1620,7 @@ vkCreateDescriptorSetLayout(VkDevice device,
             const auto sequence = g_sequence.fetch_add(1);
             if (const char* path = RecordingPath())
             {
+                std::lock_guard recordLock(g_recordMutex);
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
@@ -1688,6 +1705,7 @@ vkCreatePipelineLayout(VkDevice device,
             const auto sequence = g_sequence.fetch_add(1);
             if (const char* path = RecordingPath())
             {
+                std::lock_guard recordLock(g_recordMutex);
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
@@ -1878,6 +1896,7 @@ vkCreateComputePipelines(VkDevice device,
     {
         if (const char* path = RecordingPath())
         {
+            std::lock_guard recordLock(g_recordMutex);
             if (std::FILE* file = std::fopen(path, "ab"))
             {
                 std::fprintf(file,
