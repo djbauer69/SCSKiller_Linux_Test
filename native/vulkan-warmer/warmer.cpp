@@ -102,6 +102,7 @@ struct ComputePipelineRecord
 {
     uint64_t layoutHash = 0;
     uint64_t moduleHash = 0;
+    bool replayCompatible = true;
     VkPipelineCreateFlags flags = 0;
     VkPipelineShaderStageCreateFlags stageFlags = 0;
     std::string entryPoint = "main";
@@ -1543,6 +1544,10 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
                     return false;
                 if (!FindHex(entry, "module_hash", pipeline.moduleHash))
                     return false;
+                FindBool(entry, "replay_compatible", pipeline.replayCompatible);
+                bool stagePnextPresent = false;
+                if (FindBool(entry, "stage_pnext_present", stagePnextPresent) && stagePnextPresent)
+                    pipeline.replayCompatible = false;
                 if (!FindUnsigned(entry, "flags", value))
                     return false;
                 pipeline.flags = static_cast<VkPipelineCreateFlags>(value);
@@ -2180,6 +2185,13 @@ int Run(const std::string& recordingPath,
 
     for (const auto& record : recording.computePipelines)
     {
+        if (!record.replayCompatible)
+        {
+            ++skipped;
+            std::cerr << "Skipping compute pipeline: shader-stage or resource-layout pNext state is not fully captured\\n";
+            continue;
+        }
+
         const auto layoutIt = pipelineLayouts.find(record.layoutHash);
         const auto shaderIt = shaderModules.find(record.moduleHash);
         if (layoutIt == pipelineLayouts.end() || shaderIt == shaderModules.end())
