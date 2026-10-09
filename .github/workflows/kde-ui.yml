@@ -170,6 +170,16 @@ jobs:
           grep -q 'Refusing to replace an unrelated desktop entry' "$test_root/unsafe-desktop.log"
           grep -Fxq 'Name=Unrelated application' "$test_root/desktop-home/.local/share/applications/scskiller-kde.desktop"
           test ! -e "$test_root/desktop-home/.local/opt/scskiller-linux"
+
+          mkdir -p "$test_root/broken-desktop-home/.local/share/applications"
+          ln -s "$test_root/no-such-desktop-target" "$test_root/broken-desktop-home/.local/share/applications/scskiller-kde.desktop"
+          if HOME="$test_root/broken-desktop-home" DEST="$test_root/broken-desktop-home/.local/opt/scskiller-linux" BIN_DIR="$test_root/broken-desktop-home/.local/bin" APPLICATIONS_DIR="$test_root/broken-desktop-home/.local/share/applications" bash "$source_package/install-user-package.sh" "$source_package" > "$test_root/broken-desktop.log" 2>&1; then
+            echo "Installer unexpectedly followed a broken desktop-entry symlink" >&2
+            exit 1
+          fi
+          grep -q 'Refusing to write through a symlinked desktop entry' "$test_root/broken-desktop.log"
+          test "$(readlink "$test_root/broken-desktop-home/.local/share/applications/scskiller-kde.desktop")" = "$test_root/no-such-desktop-target"
+          test ! -e "$test_root/broken-desktop-home/.local/opt/scskiller-linux"
       - name: Upload KDE-enabled Linux package
         uses: actions/upload-artifact@v4
         with:
