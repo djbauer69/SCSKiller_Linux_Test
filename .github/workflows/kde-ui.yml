@@ -5,10 +5,30 @@ on:
     branches: [ linux-vulkan-proton ]
     paths:
       - "gui/kde/**"
+      - "native/vulkan-layer/**"
+      - "native/vulkan-warmer/**"
+      - "src/SCSKiller.Graphics/**"
+      - "src/SCSKiller.Linux.Cli/**"
+      - "scripts/package-linux.sh"
+      - "README.md"
+      - "LINUX.md"
+      - "LICENSE"
+      - "LICENSE-EXCEPTION.txt"
+      - "THIRD-PARTY-NOTICES.md"
       - ".github/workflows/kde-ui.yml"
   pull_request:
     paths:
       - "gui/kde/**"
+      - "native/vulkan-layer/**"
+      - "native/vulkan-warmer/**"
+      - "src/SCSKiller.Graphics/**"
+      - "src/SCSKiller.Linux.Cli/**"
+      - "scripts/package-linux.sh"
+      - "README.md"
+      - "LINUX.md"
+      - "LICENSE"
+      - "LICENSE-EXCEPTION.txt"
+      - "THIRD-PARTY-NOTICES.md"
       - ".github/workflows/kde-ui.yml"
 
 jobs:
