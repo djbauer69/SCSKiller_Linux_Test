@@ -213,35 +213,47 @@ public static class VulkanRecordingReader
             var layoutHash = NormalizeHash(GetString(state, "layout_hash"));
             var renderPassHash = NormalizeHash(GetString(state, "render_pass_hash"));
             var isDynamicRendering = GetObjectProperty(state, "dynamic_rendering") is not null;
-            var compatible = GetBoolean(state, "replay_compatible", true)
-                && layoutHash is not null
-                && IsPipelineLayoutCompatible(layoutHash, pipelineLayouts, descriptorLayouts)
-                && pipelineMissingHashes.Count == 0;
+            var incompatibilityReasons = new SortedSet<string>(StringComparer.Ordinal);
+
+            if (layoutHash is null)
+                incompatibilityReasons.Add("missing-pipeline-layout-hash");
+            else if (!IsPipelineLayoutCompatible(layoutHash, pipelineLayouts, descriptorLayouts))
+                incompatibilityReasons.Add("incompatible-pipeline-layout");
+
+            if (pipelineMissingHashes.Count > 0)
+                incompatibilityReasons.Add("missing-shader-code");
+
+            if (!GetBoolean(state, "replay_compatible", true))
+                incompatibilityReasons.Add("unsupported-pipeline-state");
 
             if (captured.Kind == "graphics")
             {
-                compatible &= !HasUnsupportedPNext(state);
-                if ((GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
-                    compatible = false;
+                if (HasUnsupportedPNext(state))
+                    incompatibilityReasons.Add("unsupported-pipeline-pnext");
 
-                if (isDynamicRendering)
+                if ((GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
+                    incompatibilityReasons.Add("pipeline-derivative-requires-creation-batch");
+
+                if (!isDynamicRendering)
                 {
-                    // The pNext state itself is serialized by the layer and is replayable
-                    // when no other unsupported state was captured.
-                }
-                else
-                {
-                    compatible &= GetBoolean(state, "legacy_render_pass", true);
-                    compatible &= renderPassHash is not null
-                        && renderPasses.TryGetValue(renderPassHash, out var renderPass)
-                        && GetBoolean(renderPass, "replay_compatible", false);
+                    if (!GetBoolean(state, "legacy_render_pass", true))
+                        incompatibilityReasons.Add("unsupported-render-pass-mode");
+
+                    if (renderPassHash is null ||
+                        !renderPasses.TryGetValue(renderPassHash, out var renderPass) ||
+                        !GetBoolean(renderPass, "replay_compatible", false))
+                    {
+                        incompatibilityReasons.Add("missing-or-unsupported-render-pass");
+                    }
                 }
             }
             else
             {
-                compatible &= !GetBoolean(state, "stage_pnext_present", false);
-                compatible &= GetBoolean(state, "replay_compatible", true);
+                if (GetBoolean(state, "stage_pnext_present", false))
+                    incompatibilityReasons.Add("unsupported-shader-stage-pnext");
             }
+
+            var compatible = incompatibilityReasons.Count == 0;
 
             var fixedState = BuildFixedFunctionState(captured.Kind, state, isDynamicRendering);
             var resourceInterface = BuildResourceInterface(
@@ -263,6 +275,7 @@ public static class VulkanRecordingReader
                 ["dynamic_rendering"] = isDynamicRendering ? "true" : "false",
                 ["replay_compatible"] = compatible ? "true" : "false",
                 ["missing_shader_hashes"] = string.Join(",", pipelineMissingHashes.Order(StringComparer.OrdinalIgnoreCase)),
+                ["replay_incompatibility_reasons"] = string.Join(";", incompatibilityReasons),
                 ["raw_pipeline_state_json"] = state.GetRawText()
             };
 
