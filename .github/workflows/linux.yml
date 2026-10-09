@@ -123,8 +123,11 @@ jobs:
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
             build/vulkan-smoke/dynamic-graphics-capture.jsonl \
             - \
-            build/vulkan-smoke/dynamic-graphics-warmed.cache.bin
+            build/vulkan-smoke/dynamic-graphics-warmed.cache.bin \
+            > build/vulkan-smoke/dynamic-replay.log 2>&1
+          cat build/vulkan-smoke/dynamic-replay.log
           test -s build/vulkan-smoke/dynamic-graphics-warmed.cache.bin
+          grep -q 'Graphics replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/dynamic-replay.log
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
@@ -154,8 +157,11 @@ jobs:
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
             build/vulkan-smoke/graphics-capture.jsonl \
             - \
-            build/vulkan-smoke/graphics-warmed.cache.bin
+            build/vulkan-smoke/graphics-warmed.cache.bin \
+            > build/vulkan-smoke/graphics-replay.log 2>&1
+          cat build/vulkan-smoke/graphics-replay.log
           test -s build/vulkan-smoke/graphics-warmed.cache.bin
+          grep -q 'Graphics replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/graphics-replay.log
       - name: Exercise C# Vulkan warmer integration in CI
         run: |
           timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
