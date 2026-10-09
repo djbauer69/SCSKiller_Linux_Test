@@ -13,6 +13,9 @@ class BackendController final : public QObject
     Q_PROPERTY(QString output READ output NOTIFY outputChanged)
     Q_PROPERTY(int exitCode READ exitCode NOTIFY exitCodeChanged)
     Q_PROPERTY(QString launcherPath READ launcherPath CONSTANT)
+    Q_PROPERTY(QString defaultLayerDirectory READ defaultLayerDirectory CONSTANT)
+    Q_PROPERTY(QString defaultCapturePath READ defaultCapturePath CONSTANT)
+    Q_PROPERTY(QString defaultCachePath READ defaultCachePath CONSTANT)
 
 public:
     explicit BackendController(QObject* parent = nullptr);
@@ -21,6 +24,9 @@ public:
     QString output() const { return m_output; }
     int exitCode() const { return m_exitCode; }
     QString launcherPath() const { return m_launcherPath; }
+    QString defaultLayerDirectory() const;
+    QString defaultCapturePath() const;
+    QString defaultCachePath() const;
 
     Q_INVOKABLE bool runCommand(const QString& command, const QVariantList& arguments);
     Q_INVOKABLE void clearOutput();
