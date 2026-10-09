@@ -1,6 +1,7 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,8 @@
 #include <string>
 #include <unordered_map>
 #include <type_traits>
+#include <sys/file.h>
+#include <unistd.h>
 
 namespace
 {
@@ -62,6 +65,27 @@ struct DeviceDispatch
 
 std::mutex g_mutex;
 std::mutex g_recordMutex;
+
+// File locks complement g_recordMutex: multiple Proton/game processes can
+// inherit one SCSKILLER_VK_RECORD_FILE, and the in-process mutex cannot prevent
+// their writes from interleaving.
+std::FILE* OpenRecordingAppend(const char* path)
+{
+    if (!path)
+        return nullptr;
+
+    std::FILE* file = OpenRecordingAppend(path);
+    if (!file)
+        return nullptr;
+
+    if (::flock(::fileno(file), LOCK_EX) != 0)
+    {
+        std::fclose(file);
+        return nullptr;
+    }
+
+    return file;
+}
 std::unordered_map<VkDevice, DeviceDispatch> g_devices;
 std::unordered_map<VkPhysicalDevice, VkInstance> g_physicalDeviceInstances;
 std::unordered_map<ShaderKey, uint64_t, ShaderKeyHash> g_shaderHashes;
@@ -407,7 +431,7 @@ void RecordRenderPassCreate(const VkRenderPassCreateInfo* info, uint64_t sequenc
 
     std::lock_guard recordLock(g_recordMutex);
 
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(file,
             "{\"schema\":3,\"event\":\"render_pass_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"attachments\":[",
@@ -622,7 +646,7 @@ void RecordShaderCode(uint64_t sequence, uint64_t hash, const uint32_t* words, s
 
     const auto encoded = Base64(reinterpret_cast<const uint8_t*>(words), wordCount * sizeof(uint32_t));
     std::lock_guard recordLock(g_recordMutex);
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(file,
             "{\"schema\":2,\"event\":\"shader_module_code\",\"sequence\":%llu,\"hash\":\"%016llx\",\"code_base64\":\"%s\"}\n",
@@ -644,7 +668,7 @@ void RecordShader(const char* event, uint64_t sequence, uint64_t hash, size_t wo
 
     std::lock_guard recordLock(g_recordMutex);
 
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(
             file,
@@ -668,8 +692,10 @@ void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data,
         return;
 
     char path[4096]{};
-    std::snprintf(path, sizeof(path), "%s.cache.%llu.bin",
-                  base, static_cast<unsigned long long>(sequence));
+    std::snprintf(path, sizeof(path), "%s.cache.%ld.%llu.bin",
+                  base,
+                  static_cast<long>(::getpid()),
+                  static_cast<unsigned long long>(sequence));
 
     // Keep the cache blob and its JSONL index entry paired, and serialize it
     // with all other recorder writes so concurrent pipeline creation cannot
@@ -683,7 +709,7 @@ void RecordCacheSnapshot(const char* event, uint64_t sequence, const void* data,
         if (written == size)
         {
             const std::string escapedPath = JsonEscape(path);
-            if (std::FILE* log = std::fopen(base, "ab"))
+            if (std::FILE* log = OpenRecordingAppend(base))
             {
                 std::fprintf(log,
                     "{\"schema\":1,\"event\":\"%s\",\"sequence\":%llu,\"size\":%zu,\"path\":\"%s\"}\n",
@@ -715,7 +741,7 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
 
     std::lock_guard recordLock(g_recordMutex);
 
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(file,
             "{\"schema\":3,\"event\":\"graphics_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
@@ -1129,7 +1155,7 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
 
     std::lock_guard recordLock(g_recordMutex);
 
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(file,
             "{\"schema\":3,\"event\":\"physical_device_identity\",\"sequence\":%llu,\"vendor_id\":%u,\"device_id\":%u,\"driver_version\":%u,\"api_version\":%u,\"device_name\":\"%s\",\"pipeline_cache_uuid\":\"%s\"}\n",
@@ -1157,7 +1183,7 @@ void RecordCount(const char* event, uint64_t sequence, uint32_t count)
 
     std::lock_guard recordLock(g_recordMutex);
 
-    if (std::FILE* file = std::fopen(path, "ab"))
+    if (std::FILE* file = OpenRecordingAppend(path))
     {
         std::fprintf(
             file,
@@ -1758,7 +1784,7 @@ vkCreateDescriptorSetLayout(VkDevice device,
             if (const char* path = RecordingPath())
             {
                 std::lock_guard recordLock(g_recordMutex);
-                if (std::FILE* file = std::fopen(path, "ab"))
+                if (std::FILE* file = OpenRecordingAppend(path))
                 {
                     std::fprintf(file,
                         "{\"schema\":3,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"bindings\":[",
@@ -1864,7 +1890,7 @@ vkCreatePipelineLayout(VkDevice device,
             if (const char* path = RecordingPath())
             {
                 std::lock_guard recordLock(g_recordMutex);
-                if (std::FILE* file = std::fopen(path, "ab"))
+                if (std::FILE* file = OpenRecordingAppend(path))
                 {
                     std::fprintf(file,
                         "{\"schema\":3,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"set_layouts\":[",
@@ -2058,7 +2084,7 @@ vkCreateComputePipelines(VkDevice device,
         if (const char* path = RecordingPath())
         {
             std::lock_guard recordLock(g_recordMutex);
-            if (std::FILE* file = std::fopen(path, "ab"))
+            if (std::FILE* file = OpenRecordingAppend(path))
             {
                 std::fprintf(file,
                     "{\"schema\":3,\"event\":\"compute_pipeline_state\",\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
