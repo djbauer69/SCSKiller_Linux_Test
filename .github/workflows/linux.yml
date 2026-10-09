@@ -55,6 +55,17 @@ jobs:
           void main() {}
           EOF
           glslc -fshader-stage=compute build/vulkan-smoke/compute.comp -o build/vulkan-smoke/compute.spv
+          cat > build/vulkan-smoke/specialization.comp <<'EOF'
+          #version 450
+          layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+          layout(constant_id = 0) const uint gate = 1u;
+          void main() {
+              if (gate == 7u) {
+                  barrier();
+              }
+          }
+          EOF
+          glslc -fshader-stage=compute build/vulkan-smoke/specialization.comp -o build/vulkan-smoke/specialization.spv
       - name: Run Vulkan loader smoke test with SCSKiller layer
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
@@ -74,6 +85,31 @@ jobs:
           grep -q '"event":"pipeline_layout_create"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/capture.jsonl
           grep -q '"event":"pipeline_cache_snapshot"' build/vulkan-smoke/capture.jsonl
+      - name: Capture and replay a compute pipeline with specialization constants
+        env:
+          VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/vulkan-install/lib
+          VK_INSTANCE_LAYERS: VK_LAYER_SCSKILLER
+          NODEVICE_SELECT: "1"
+          SCSKILLER_VK_RECORD: "1"
+          SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/specialization-capture.jsonl
+        run: |
+          timeout 60s build/vulkan-probe/scskiller-vulkan-probe --specialization build/vulkan-smoke/specialization.spv
+          test -s build/vulkan-smoke/specialization-capture.jsonl
+          grep -q '"data_size":4' build/vulkan-smoke/specialization-capture.jsonl
+          grep -q '"constant_id":0,"offset":0,"size":4' build/vulkan-smoke/specialization-capture.jsonl
+          grep -q '"data_base64":"BwAAAA=="' build/vulkan-smoke/specialization-capture.jsonl
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/specialization-capture.jsonl > build/vulkan-smoke/specialization-plan.log
+          grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/specialization-plan.log
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/specialization-capture.jsonl - \
+            build/vulkan-smoke/specialization-warmed.cache.bin \
+            > build/vulkan-smoke/specialization-replay.log 2>&1
+          cat build/vulkan-smoke/specialization-replay.log
+          test -s build/vulkan-smoke/specialization-warmed.cache.bin
+          grep -q 'Compute replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/specialization-replay.log
+
       - name: Exercise physical-device group enumeration through the Vulkan layer
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
