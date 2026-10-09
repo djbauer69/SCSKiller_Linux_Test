@@ -401,7 +401,7 @@ jobs:
           mkdir -p "$guard_bin"
           cat > "$guard_bin/rm" <<'EOF'
           #!/usr/bin/env bash
-          printf '%s\\n' "$*" >> "$SCSKILLER_GUARD_RM_LOG"
+          printf '%s\n' "$*" >> "$SCSKILLER_GUARD_RM_LOG"
           exit 97
           EOF
           chmod +x "$guard_bin/rm"
@@ -410,9 +410,9 @@ jobs:
             local build_path="$2"
             local rm_log="${GITHUB_WORKSPACE}/build/package-guard-rm.log"
             rm -f "$rm_log"
-            if PATH="$guard_bin:$PATH" \\
-              SCSKILLER_GUARD_RM_LOG="$rm_log" \\
-              STAGE="$stage_path" BUILD_ROOT="$build_path" \\
+            if PATH="$guard_bin:$PATH" \
+              SCSKILLER_GUARD_RM_LOG="$rm_log" \
+              STAGE="$stage_path" BUILD_ROOT="$build_path" \
               bash scripts/package-linux.sh; then
               echo "Packaging unexpectedly accepted unsafe STAGE=$stage_path BUILD_ROOT=$build_path" >&2
               exit 1
