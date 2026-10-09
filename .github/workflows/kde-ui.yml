@@ -47,7 +47,12 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja dotnet-sdk-10.0 vulkan-headers vulkan-icd-loader \
             qt6-base qt6-declarative qt6-shadertools kirigami \
-            icu openssl krb5 zlib libunwind
+            icu openssl krb5 zlib libunwind git
+      - name: Validate packaging shell syntax
+        run: |
+          bash -n scripts/package-linux.sh
+          bash -n scripts/install-user-package.sh
+          bash -n packaging/arch/PKGBUILD
       - name: Validate Arch PKGBUILD metadata
         run: |
           useradd --create-home --user-group pkgcheck
