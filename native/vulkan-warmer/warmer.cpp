@@ -29,6 +29,7 @@ struct DescriptorBindingRecord
 struct DescriptorLayoutRecord
 {
     VkDescriptorSetLayoutCreateFlags flags = 0;
+    bool replayCompatible = true;
     std::vector<DescriptorBindingRecord> bindings;
 };
 
@@ -85,6 +86,7 @@ struct RenderPassRecord
 struct PipelineLayoutRecord
 {
     VkPipelineLayoutCreateFlags flags = 0;
+    bool replayCompatible = true;
     std::vector<uint64_t> setLayoutHashes;
     std::vector<PushConstantRecord> pushConstants;
 };
@@ -1246,6 +1248,7 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
             uint64_t flags = 0;
             FindUnsigned(line, "flags", flags);
             record.flags = static_cast<VkDescriptorSetLayoutCreateFlags>(flags);
+            FindBool(line, "replay_compatible", record.replayCompatible);
 
             std::string_view bindings;
             if (!ExtractArray(line, "bindings", bindings))
@@ -1293,6 +1296,7 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
             uint64_t value = 0;
             FindUnsigned(line, "flags", value);
             record.flags = static_cast<VkPipelineLayoutCreateFlags>(value);
+            FindBool(line, "replay_compatible", record.replayCompatible);
 
             std::string_view setLayouts;
             if (!ExtractArray(line, "set_layouts", setLayouts))
@@ -1942,7 +1946,7 @@ int Run(const std::string& recordingPath,
 
     for (const auto& [hash, record] : recording.descriptorLayouts)
     {
-        bool unsupported = false;
+        bool unsupported = !record.replayCompatible;
         std::vector<VkDescriptorSetLayoutBinding> bindings;
         bindings.reserve(record.bindings.size());
         for (const auto& binding : record.bindings)
@@ -1965,7 +1969,7 @@ int Run(const std::string& recordingPath,
         if (unsupported)
         {
             std::cerr << "Skipping descriptor layout " << std::hex << hash << std::dec
-                      << ": immutable samplers are not yet reconstructible\\n";
+                      << ": pNext or immutable-sampler state is not fully captured\\n";
             continue;
         }
 
@@ -2100,7 +2104,7 @@ int Run(const std::string& recordingPath,
     for (const auto& [hash, record] : recording.pipelineLayouts)
     {
         std::vector<VkDescriptorSetLayout> setLayouts;
-        bool unsupported = false;
+        bool unsupported = !record.replayCompatible;
         for (const uint64_t setHash : record.setLayoutHashes)
         {
             const auto it = descriptorLayouts.find(setHash);
@@ -2115,7 +2119,7 @@ int Run(const std::string& recordingPath,
         if (unsupported)
         {
             std::cerr << "Skipping pipeline layout " << std::hex << hash << std::dec
-                      << ": referenced descriptor layout is not reconstructible\\n";
+                      << ": pNext or referenced descriptor-layout state is not fully captured\\n";
             continue;
         }
 
