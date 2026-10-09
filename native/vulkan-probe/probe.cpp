@@ -1,4 +1,6 @@
 #include <vulkan/vulkan.h>
+#include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -28,16 +30,19 @@ int main(int argc, char** argv)
         std::string(argv[1]) == "--device-groups";
     const bool specializationMode = argc >= 2 &&
         std::string(argv[1]) == "--specialization";
-    if ((!graphicsMode && !deviceGroupMode && !specializationMode && argc > 2) ||
+    const bool feedbackMode = argc >= 2 &&
+        std::string(argv[1]) == "--feedback";
+    if ((!graphicsMode && !deviceGroupMode && !specializationMode && !feedbackMode && argc > 2) ||
         (graphicsMode && argc != 4) ||
         (deviceGroupMode && argc != 2) ||
-        (specializationMode && argc != 3))
+        ((specializationMode || feedbackMode) && argc != 3))
     {
         std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
                   << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n"
                   << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n"
                   << "       scskiller-vulkan-probe --device-groups\n"
-                  << "       scskiller-vulkan-probe --specialization compute.spv\n";
+                  << "       scskiller-vulkan-probe --specialization compute.spv\n"
+                  << "       scskiller-vulkan-probe --feedback compute.spv\n";
         return 1;
     }
 
@@ -225,6 +230,43 @@ int main(int argc, char** argv)
         }
         dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
         deviceInfo.pNext = &dynamicRenderingFeatures;
+    }
+
+    const char* pipelineFeedbackExtension = "VK_EXT_pipeline_creation_feedback";
+    if (graphicsMode || feedbackMode)
+    {
+        uint32_t extensionCount = 0;
+        if (!Check(vkEnumerateDeviceExtensionProperties(
+                       physicalDevice, nullptr, &extensionCount, nullptr),
+                   "vkEnumerateDeviceExtensionProperties(count)"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        if (extensionCount > 0 &&
+            !Check(vkEnumerateDeviceExtensionProperties(
+                       physicalDevice, nullptr, &extensionCount, extensions.data()),
+                   "vkEnumerateDeviceExtensionProperties"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        const bool hasPipelineFeedback = std::any_of(
+            extensions.begin(), extensions.end(), [pipelineFeedbackExtension](const auto& extension) {
+                return std::strcmp(extension.extensionName, pipelineFeedbackExtension) == 0;
+            });
+        if (!hasPipelineFeedback)
+        {
+            std::cerr << "Selected Vulkan device does not support VK_EXT_pipeline_creation_feedback\n";
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        deviceInfo.enabledExtensionCount = 1;
+        deviceInfo.ppEnabledExtensionNames = &pipelineFeedbackExtension;
     }
 
     VkDevice device = VK_NULL_HANDLE;
@@ -560,9 +602,19 @@ int main(int argc, char** argv)
             {0.0f, 0.0f, 0.0f, 0.0f}
         };
 
+        VkPipelineCreationFeedback pipelineFeedback{};
+        VkPipelineCreationFeedback stageFeedback[2]{};
+        VkPipelineCreationFeedbackCreateInfo feedbackInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,
+            nullptr,
+            &pipelineFeedback,
+            2,
+            stageFeedback
+        };
+
         VkPipelineRenderingCreateInfo renderingInfo{
             VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            nullptr,
+            dynamicGraphicsMode ? &feedbackInfo : nullptr,
             0,
             1,
             &colorAttachment.format,
@@ -572,7 +624,7 @@ int main(int argc, char** argv)
 
         VkGraphicsPipelineCreateInfo graphicsInfo{
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            dynamicGraphicsMode ? &renderingInfo : nullptr,
+            dynamicGraphicsMode ? &renderingInfo : &feedbackInfo,
             0,
             2,
             stages,
@@ -618,9 +670,11 @@ int main(int argc, char** argv)
         vkDestroyShaderModule(device, vertexShader, nullptr);
     }
 
-    if (specializationMode || (argc == 2 && !graphicsMode && !deviceGroupMode))
+    if (specializationMode || feedbackMode ||
+        (argc == 2 && !graphicsMode && !deviceGroupMode))
     {
-        const char* computeShaderPath = specializationMode ? argv[2] : argv[1];
+        const char* computeShaderPath =
+            (specializationMode || feedbackMode) ? argv[2] : argv[1];
         std::ifstream shaderFile(computeShaderPath, std::ios::binary | std::ios::ate);
         if (!shaderFile)
         {
@@ -699,9 +753,19 @@ int main(int argc, char** argv)
             "main",
             specializationMode ? &specializationInfo : nullptr
         };
+        VkPipelineCreationFeedback pipelineFeedback{};
+        VkPipelineCreationFeedback stageFeedback{};
+        VkPipelineCreationFeedbackCreateInfo feedbackInfo{
+            VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,
+            nullptr,
+            &pipelineFeedback,
+            1,
+            &stageFeedback
+        };
+
         VkComputePipelineCreateInfo computeInfo{
             VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-            nullptr,
+            feedbackMode ? &feedbackInfo : nullptr,
             0,
             stageInfo,
             pipelineLayout,
@@ -724,7 +788,9 @@ int main(int argc, char** argv)
 
         std::cout << (specializationMode
             ? "Compute pipeline with specialization constants exercised successfully\n"
-            : "Compute pipeline hook exercised successfully\n");
+            : feedbackMode
+                ? "Compute pipeline with pipeline-creation feedback exercised successfully\n"
+                : "Compute pipeline hook exercised successfully\n");
         vkDestroyPipeline(device, pipeline, nullptr);
         vkDestroyShaderModule(device, shaderModule, nullptr);
     }
