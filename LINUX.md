@@ -78,13 +78,16 @@ On a development machine with CMake, Ninja, .NET 10 SDK, Vulkan development head
 
     bash scripts/package-linux.sh
 
-This stages a self-contained directory layout at `dist/scskiller-linux` (the managed CLI uses the installed .NET 10 runtime). The launcher is `dist/scskiller-linux/bin/scskiller-linux`; the Vulkan layer manifest, shared library, native warmer, and docs are staged alongside it. Override `STAGE` or `BUILD_ROOT` to choose other output directories.
+This stages a self-contained directory layout at `dist/scskiller-linux`. The managed CLI is published self-contained for `linux-x64` or `linux-arm64`, so a separate .NET runtime is not required on the target machine. The launcher is `dist/scskiller-linux/bin/scskiller-linux`; the Vulkan layer manifest, shared library, native warmer, and docs are staged alongside it. Override `STAGE` or `BUILD_ROOT` to choose other output directories.
 
 Example capture command from the source checkout:
 
     dist/scskiller-linux/bin/scskiller-linux record-vulkan ./your-vulkan-app "$PWD" dist/scskiller-linux/share/vulkan/explicit_layer.d capture.jsonl
 
 For Proton, pass the Proton executable, compatdata path, work directory, game executable, layer manifest directory, and capture path to `record-proton`. The recorders are experimental and should first be exercised with a small test application before using them with a full game.
+
+
+Successful Linux CI runs also upload the staged directory as an artifact named `scskiller-linux-<commit-sha>` for 14 days. Download and extract it on a compatible Linux system, then run `bin/scskiller-linux help`. The package still requires a working Vulkan loader and an installed GPU driver/ICD; it does not bundle vendor drivers.
 
 
 ## Inspecting a capture
