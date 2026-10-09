@@ -832,9 +832,10 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     std::fprintf(file, "%d", rendering->pColorAttachmentFormats[format]);
                 }
                 std::fprintf(file,
-                    "],\"depth_format\":%d,\"stencil_format\":%d}",
+                    "],\"depth_format\":%d,\"stencil_format\":%d,\"pnext_present\":%s}",
                     rendering->depthAttachmentFormat,
-                    rendering->stencilAttachmentFormat);
+                    rendering->stencilAttachmentFormat,
+                    rendering->pNext ? "true" : "false");
             }
             else
             {
@@ -847,6 +848,14 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                  pipelineNode = pipelineNode->pNext)
             {
                 if (pipelineNode->sType != VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO)
+                {
+                    pipelinePnextSupported = false;
+                    break;
+                }
+
+                const auto* renderingNode =
+                    reinterpret_cast<const VkPipelineRenderingCreateInfo*>(pipelineNode);
+                if (renderingNode->pNext != nullptr)
                 {
                     pipelinePnextSupported = false;
                     break;
