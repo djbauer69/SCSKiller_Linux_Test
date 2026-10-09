@@ -1213,6 +1213,10 @@ VkLayerDeviceCreateInfo* FindDeviceLinkInfo(const VkDeviceCreateInfo* createInfo
 }
 
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char*);
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkEnumeratePhysicalDeviceGroups(
+    VkInstance, uint32_t*, VkPhysicalDeviceGroupProperties*);
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkEnumeratePhysicalDeviceGroupsKHR(
+    VkInstance, uint32_t*, VkPhysicalDeviceGroupProperties*);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char*);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_layerGetPhysicalDeviceProcAddr(VkInstance, const char*);
 
@@ -1432,6 +1436,86 @@ vkEnumeratePhysicalDevices(VkInstance instance,
     }
 
     return result;
+}
+
+namespace
+{
+VkResult EnumeratePhysicalDeviceGroupsCommon(
+    VkInstance instance,
+    uint32_t* groupCount,
+    VkPhysicalDeviceGroupProperties* groups,
+    const char* commandName,
+    const char* fallbackName)
+{
+    if (!groupCount)
+        return VK_ERROR_INITIALIZATION_FAILED;
+
+    InstanceDispatch instanceDispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        const auto it = g_instances.find(instance);
+        if (it == g_instances.end())
+            return VK_ERROR_INITIALIZATION_FAILED;
+        instanceDispatch = it->second;
+    }
+
+    auto enumerateNext = instanceDispatch.GetInstanceProcAddr
+        ? reinterpret_cast<PFN_vkEnumeratePhysicalDeviceGroups>(
+            instanceDispatch.GetInstanceProcAddr(instance, commandName))
+        : nullptr;
+    if (!enumerateNext && fallbackName && instanceDispatch.GetInstanceProcAddr)
+    {
+        enumerateNext = reinterpret_cast<PFN_vkEnumeratePhysicalDeviceGroups>(
+            instanceDispatch.GetInstanceProcAddr(instance, fallbackName));
+    }
+    if (!enumerateNext)
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+    const VkResult result = enumerateNext(instance, groupCount, groups);
+    if ((result == VK_SUCCESS || result == VK_INCOMPLETE) && groups)
+    {
+        std::lock_guard lock(g_mutex);
+        for (uint32_t groupIndex = 0; groupIndex < *groupCount; ++groupIndex)
+        {
+            const auto& group = groups[groupIndex];
+            const uint32_t deviceCount = std::min(
+                group.physicalDeviceCount,
+                static_cast<uint32_t>(VK_MAX_DEVICE_GROUP_SIZE));
+            for (uint32_t deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex)
+                g_physicalDeviceInstances[group.physicalDevices[deviceIndex]] = instance;
+        }
+    }
+
+    return result;
+}
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumeratePhysicalDeviceGroups(
+    VkInstance instance,
+    uint32_t* groupCount,
+    VkPhysicalDeviceGroupProperties* groups)
+{
+    return EnumeratePhysicalDeviceGroupsCommon(
+        instance,
+        groupCount,
+        groups,
+        "vkEnumeratePhysicalDeviceGroups",
+        "vkEnumeratePhysicalDeviceGroupsKHR");
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumeratePhysicalDeviceGroupsKHR(
+    VkInstance instance,
+    uint32_t* groupCount,
+    VkPhysicalDeviceGroupProperties* groups)
+{
+    return EnumeratePhysicalDeviceGroupsCommon(
+        instance,
+        groupCount,
+        groups,
+        "vkEnumeratePhysicalDeviceGroupsKHR",
+        "vkEnumeratePhysicalDeviceGroups");
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -2276,6 +2360,30 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
         return reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices);
     if (std::strcmp(name, "vkCreateDevice") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice);
+
+    if (std::strcmp(name, "vkEnumeratePhysicalDeviceGroups") == 0 ||
+        std::strcmp(name, "vkEnumeratePhysicalDeviceGroupsKHR") == 0)
+    {
+        if (instance == VK_NULL_HANDLE)
+            return nullptr;
+
+        InstanceDispatch instanceDispatch{};
+        {
+            std::lock_guard lock(g_mutex);
+            const auto it = g_instances.find(instance);
+            if (it == g_instances.end())
+                return nullptr;
+            instanceDispatch = it->second;
+        }
+
+        if (!instanceDispatch.GetInstanceProcAddr ||
+            !instanceDispatch.GetInstanceProcAddr(instance, name))
+            return nullptr;
+
+        if (std::strcmp(name, "vkEnumeratePhysicalDeviceGroups") == 0)
+            return reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDeviceGroups);
+        return reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDeviceGroupsKHR);
+    }
     if (std::strcmp(name, "vkEnumerateInstanceLayerProperties") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkEnumerateInstanceLayerProperties);
     if (std::strcmp(name, "vkEnumerateInstanceExtensionProperties") == 0)
