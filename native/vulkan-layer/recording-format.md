@@ -1,6 +1,6 @@
 # Vulkan recording format
 
-The runtime recorder emits newline-delimited JSON (JSONL). Each event has a monotonically increasing sequence. Schema versions are currently 1, 2, and 3.
+The runtime recorder emits newline-delimited JSON (JSONL). Events carry a sequence counter for diagnostics and for pairing related records (for example shader creation with its SPIR-V bytes). Counters are process-local, so multiple processes may reuse values and concurrent appends need not be sorted by sequence. Consumers should use event contents and stable hashes for correlation rather than assuming a globally unique, file-ordered counter. Schema versions are currently 1, 2, and 3.
 
 Current event types:
 
