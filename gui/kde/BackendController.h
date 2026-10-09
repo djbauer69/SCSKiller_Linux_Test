@@ -16,6 +16,7 @@ class BackendController final : public QObject
     Q_PROPERTY(QString defaultLayerDirectory READ defaultLayerDirectory CONSTANT)
     Q_PROPERTY(QString defaultCapturePath READ defaultCapturePath CONSTANT)
     Q_PROPERTY(QString defaultCachePath READ defaultCachePath CONSTANT)
+    Q_PROPERTY(QString defaultWorkingDirectory READ defaultWorkingDirectory CONSTANT)
 
 public:
     explicit BackendController(QObject* parent = nullptr);
@@ -27,6 +28,7 @@ public:
     QString defaultLayerDirectory() const;
     QString defaultCapturePath() const;
     QString defaultCachePath() const;
+    QString defaultWorkingDirectory() const;
 
     Q_INVOKABLE bool runCommand(const QString& command, const QVariantList& arguments);
     Q_INVOKABLE void clearOutput();
