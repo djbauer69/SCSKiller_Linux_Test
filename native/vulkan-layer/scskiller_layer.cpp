@@ -555,6 +555,12 @@ const char* ShaderStageName(VkShaderStageFlagBits stage)
     case VK_SHADER_STAGE_GEOMETRY_BIT: return "geometry";
     case VK_SHADER_STAGE_FRAGMENT_BIT: return "fragment";
     case VK_SHADER_STAGE_COMPUTE_BIT: return "compute";
+    case VK_SHADER_STAGE_RAYGEN_BIT_KHR: return "raygen";
+    case VK_SHADER_STAGE_ANY_HIT_BIT_KHR: return "any_hit";
+    case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR: return "closest_hit";
+    case VK_SHADER_STAGE_MISS_BIT_KHR: return "miss";
+    case VK_SHADER_STAGE_INTERSECTION_BIT_KHR: return "intersection";
+    case VK_SHADER_STAGE_CALLABLE_BIT_KHR: return "callable";
     default: return "other";
     }
 }
@@ -1204,10 +1210,168 @@ void RecordCount(const char* event, uint64_t sequence, uint32_t count)
     {
         std::fprintf(
             file,
-            "{\"schema\":1,\"event\":\"%s\",\"sequence\":%llu,\"count\":%u}\n",
+            "{\"schema\":2,\"event\":\"%s\",\"process_id\":%ld,\"sequence\":%llu,\"count\":%u}\n",
             event,
+            static_cast<long>(::getpid()),
             static_cast<unsigned long long>(sequence),
             count);
+        std::fclose(file);
+    }
+}
+
+void RecordRayTracingPipelineState(
+    VkDevice device,
+    uint64_t sequence,
+    uint32_t count,
+    const VkRayTracingPipelineCreateInfoKHR* infos)
+{
+    if (!RecordingEnabled() || (count > 0 && !infos))
+        return;
+
+    const char* path = RecordingPath();
+    if (!path)
+        return;
+
+    std::lock_guard recordLock(g_recordMutex);
+    if (std::FILE* file = OpenRecordingAppend(path))
+    {
+        std::fprintf(file,
+            "{\"schema\":3,\"event\":\"ray_tracing_pipeline_state\",\"process_id\":%ld,\"sequence\":%llu,\"count\":%u,\"pipelines\":[",
+            static_cast<long>(::getpid()),
+            static_cast<unsigned long long>(sequence),
+            count);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (i)
+                std::fputc(',', file);
+
+            const auto& info = infos[i];
+            uint64_t layoutHash = 0;
+            {
+                std::lock_guard lock(g_mutex);
+                const auto it = g_pipelineLayoutHashes.find(
+                    PipelineLayoutKey{device, info.layout});
+                if (it != g_pipelineLayoutHashes.end())
+                    layoutHash = it->second;
+            }
+
+            std::fprintf(file,
+                "{\"flags\":%u,\"layout_hash\":\"%016llx\",\"stage_count\":%u,\"stages\":[",
+                info.flags,
+                static_cast<unsigned long long>(layoutHash),
+                info.stageCount);
+
+            bool firstStage = true;
+            if (info.pStages)
+            {
+                for (uint32_t stage = 0; stage < info.stageCount; ++stage)
+                {
+                    if (!firstStage)
+                        std::fputc(',', file);
+                    firstStage = false;
+
+                    const auto& state = info.pStages[stage];
+                    uint64_t shaderHash = 0;
+                    {
+                        std::lock_guard lock(g_mutex);
+                        const auto it = g_shaderHashes.find(ShaderKey{device, state.module});
+                        if (it != g_shaderHashes.end())
+                            shaderHash = it->second;
+                    }
+
+                    std::fprintf(file,
+                        "{\"stage\":\"%s\",\"stage_flags\":%u,\"module_hash\":\"%016llx\",\"entry_point\":\"%s\",\"pnext_present\":%s,\"specialization\":",
+                        ShaderStageName(state.stage),
+                        state.flags,
+                        static_cast<unsigned long long>(shaderHash),
+                        JsonEscape(state.pName ? state.pName : "main").c_str(),
+                        state.pNext ? "true" : "false");
+                    RecordSpecialization(file, state.pSpecializationInfo);
+                    std::fputc('}', file);
+                }
+            }
+
+            std::fprintf(file,
+                "],\"group_count\":%u,\"groups\":[",
+                info.groupCount);
+
+            bool firstGroup = true;
+            if (info.pGroups)
+            {
+                for (uint32_t group = 0; group < info.groupCount; ++group)
+                {
+                    if (!firstGroup)
+                        std::fputc(',', file);
+                    firstGroup = false;
+
+                    const auto& state = info.pGroups[group];
+                    std::fprintf(file,
+                        "{\"type\":%u,\"general_shader\":%u,\"closest_hit_shader\":%u,\"any_hit_shader\":%u,\"intersection_shader\":%u,\"pnext_present\":%s}",
+                        state.type,
+                        state.generalShader,
+                        state.closestHitShader,
+                        state.anyHitShader,
+                        state.intersectionShader,
+                        state.pNext ? "true" : "false");
+                }
+            }
+
+            std::fprintf(file,
+                "],\"max_pipeline_ray_recursion_depth\":%u,\"base_pipeline_index\":%d,\"base_pipeline_handle_present\":%s,\"pipeline_pnext_types\":[",
+                info.maxPipelineRayRecursionDepth,
+                info.basePipelineIndex,
+                info.basePipelineHandle != VK_NULL_HANDLE ? "true" : "false");
+
+            bool firstPnext = true;
+            for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
+                 node;
+                 node = node->pNext)
+            {
+                if (!firstPnext)
+                    std::fputc(',', file);
+                firstPnext = false;
+                std::fprintf(file, "%u", static_cast<uint32_t>(node->sType));
+            }
+
+            std::fprintf(file,
+                "],\"library_info_present\":%s,\"library_count\":%u,\"library_interface\":",
+                info.pLibraryInfo ? "true" : "false",
+                info.pLibraryInfo ? info.pLibraryInfo->libraryCount : 0);
+
+            if (info.pLibraryInterface)
+            {
+                std::fprintf(file,
+                    "{\"max_pipeline_ray_payload_size\":%u,\"max_pipeline_ray_hit_attribute_size\":%u}",
+                    info.pLibraryInterface->maxPipelineRayPayloadSize,
+                    info.pLibraryInterface->maxPipelineRayHitAttributeSize);
+            }
+            else
+            {
+                std::fputs("null", file);
+            }
+
+            std::fprintf(file,
+                ",\"dynamic_state_count\":%u,\"dynamic_states\":[",
+                info.pDynamicState ? info.pDynamicState->dynamicStateCount : 0);
+            if (info.pDynamicState && info.pDynamicState->pDynamicStates)
+            {
+                for (uint32_t state = 0; state < info.pDynamicState->dynamicStateCount; ++state)
+                {
+                    if (state)
+                        std::fputc(',', file);
+                    std::fprintf(file, "%u", static_cast<uint32_t>(
+                        info.pDynamicState->pDynamicStates[state]));
+                }
+            }
+
+            std::fputs(
+                "],\"replay_compatible\":false,"
+                "\"replay_incompatibility_reason\":\"ray-tracing-pipeline-replay-not-implemented\"}",
+                file);
+        }
+
+        std::fputs("]}\n", file);
         std::fclose(file);
     }
 }
@@ -2201,10 +2365,9 @@ vkCreateRayTracingPipelinesKHR(VkDevice device,
     if (!dispatch.CreateRayTracingPipelinesKHR)
         return VK_ERROR_EXTENSION_NOT_PRESENT;
 
-    RecordCount(
-        "ray_tracing_pipeline_create",
-        g_sequence.fetch_add(1),
-        createInfoCount);
+    const uint64_t sequence = g_sequence.fetch_add(1);
+    RecordCount("ray_tracing_pipeline_create", sequence, createInfoCount);
+    RecordRayTracingPipelineState(device, sequence, createInfoCount, createInfos);
 
     return dispatch.CreateRayTracingPipelinesKHR(
         device,
