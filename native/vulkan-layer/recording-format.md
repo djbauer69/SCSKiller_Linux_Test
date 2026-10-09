@@ -16,6 +16,7 @@ Current event types:
 - render_pass_create
 - pipeline_cache_snapshot
 - pipeline_cache_replay
+- pipeline_cache_replay_skipped
 - physical_device_identity
 
 ## Replayable state
@@ -64,7 +65,7 @@ A later run can seed an empty VkPipelineCache by passing the snapshot to the sta
 
 The layer only injects the snapshot when the application's own VkPipelineCacheCreateInfo has initialDataSize == 0. If the application supplies its own initial cache, it is left untouched.
 
-The cache blob is device/driver-specific. A replay failure must be treated as a normal cache miss; it must never be assumed portable between different GPUs, drivers, or driver builds.
+The cache blob is device/driver-specific. Before injection, the layer validates the standard cache header against the selected physical device's vendor ID, device ID, and pipeline-cache UUID, and skips injection if the header or cache-creation pNext chain is unsupported. A pipeline_cache_replay_skipped event marks that fallback; the application's own pipeline-cache creation then proceeds with an empty cache. Never assume these blobs are portable between different GPUs, drivers, or driver builds.
 
 ## Environment variables
 
