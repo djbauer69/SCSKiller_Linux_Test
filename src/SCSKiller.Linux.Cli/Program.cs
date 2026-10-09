@@ -12,6 +12,8 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
     Console.WriteLine("  record-vulkan <executable> <workdir> <layer-dir> <capture.jsonl> [args...]  Record a native Vulkan process");
     Console.WriteLine("  record-proton <proton> <prefix> <workdir> <game-exe> <layer-dir> <capture.jsonl> [game args...]  Record Vulkan through Proton");
+    Console.WriteLine("  run-vulkan <executable> <workdir> <layer-dir> <cache.bin> [app args...]  Launch a native Vulkan app with a warmed cache");
+    Console.WriteLine("  run-proton-vulkan <proton> <prefix> <workdir> <game-exe> <layer-dir> <cache.bin> [game args...]  Launch Proton with a warmed cache");
     Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path] [--require-complete]  Replay captured Vulkan pipelines");
     return;
 }
@@ -114,6 +116,45 @@ switch (args[0])
         Console.WriteLine($"Vulkan recording exit code: {recordResult.ExitCode}");
         Console.WriteLine($"Recording file: {recordResult.RecordingPath}");
         Environment.ExitCode = recordResult.ExitCode;
+        break;
+
+    case "run-vulkan" when args.Length >= 5:
+        var runVulkanResult = await VulkanCacheLauncher.RunAsync(
+            new VulkanCacheLaunchOptions(
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args.Length > 5 ? args[5..] : Array.Empty<string>()));
+
+        Console.Write(runVulkanResult.StandardOutput);
+        if (!string.IsNullOrEmpty(runVulkanResult.StandardError))
+            Console.Error.Write(runVulkanResult.StandardError);
+
+        Console.WriteLine($"Vulkan cache launch exit code: {runVulkanResult.ExitCode}");
+        Environment.ExitCode = runVulkanResult.ExitCode;
+        break;
+
+    case "run-proton-vulkan" when args.Length >= 7:
+        var runProtonArguments = new[] { "run", args[4] }
+            .Concat(args.Length > 7 ? args[7..] : Array.Empty<string>())
+            .ToArray();
+
+        var runProtonResult = await VulkanCacheLauncher.RunAsync(
+            new VulkanCacheLaunchOptions(
+                args[1],
+                args[3],
+                args[5],
+                args[6],
+                runProtonArguments,
+                args[2]));
+
+        Console.Write(runProtonResult.StandardOutput);
+        if (!string.IsNullOrEmpty(runProtonResult.StandardError))
+            Console.Error.Write(runProtonResult.StandardError);
+
+        Console.WriteLine($"Proton Vulkan cache launch exit code: {runProtonResult.ExitCode}");
+        Environment.ExitCode = runProtonResult.ExitCode;
         break;
 
     case "warm-vulkan" when args.Length >= 2:
