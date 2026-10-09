@@ -134,9 +134,16 @@ struct RenderPassKeyHash
 
 std::unordered_map<RenderPassKey, uint64_t, RenderPassKeyHash> g_renderPassHashes;
 
+struct InstanceDispatch
+{
+    PFN_vkGetInstanceProcAddr GetInstanceProcAddr = nullptr;
+    PFN_GetPhysicalDeviceProcAddr GetPhysicalDeviceProcAddr = nullptr;
+};
+
+std::unordered_map<VkInstance, InstanceDispatch> g_instances;
 std::atomic<uint64_t> g_sequence{1};
-PFN_vkGetInstanceProcAddr g_nextInstanceProcAddr = nullptr;
-PFN_GetPhysicalDeviceProcAddr g_nextPhysicalDeviceProcAddr = nullptr;
+// Only used for null-instance/global command lookups. Instance commands use g_instances.
+PFN_vkGetInstanceProcAddr g_bootstrapInstanceProcAddr = nullptr;
 
 bool DebugEnabled()
 {
@@ -1033,16 +1040,25 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
     if (instance == VK_NULL_HANDLE)
         return;
 
+    InstanceDispatch instanceDispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_instances.find(instance);
+        if (it == g_instances.end())
+            return;
+        instanceDispatch = it->second;
+    }
+
     auto getProperties =
-        g_nextPhysicalDeviceProcAddr
+        instanceDispatch.GetPhysicalDeviceProcAddr
             ? reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
-                g_nextPhysicalDeviceProcAddr(instance, "vkGetPhysicalDeviceProperties"))
+                instanceDispatch.GetPhysicalDeviceProcAddr(instance, "vkGetPhysicalDeviceProperties"))
             : nullptr;
 
-    if (!getProperties && g_nextInstanceProcAddr)
+    if (!getProperties && instanceDispatch.GetInstanceProcAddr)
     {
         getProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
-            g_nextInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"));
+            instanceDispatch.GetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"));
     }
 
     if (!getProperties)
@@ -1201,11 +1217,22 @@ vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
             instance = it->second;
     }
 
-    if (!g_nextInstanceProcAddr || instance == VK_NULL_HANDLE)
+    if (instance == VK_NULL_HANDLE)
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    auto enumerateNext = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-        g_nextInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
+    InstanceDispatch instanceDispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_instances.find(instance);
+        if (it == g_instances.end())
+            return VK_ERROR_INITIALIZATION_FAILED;
+        instanceDispatch = it->second;
+    }
+
+    auto enumerateNext = instanceDispatch.GetInstanceProcAddr
+        ? reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+            instanceDispatch.GetInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"))
+        : nullptr;
     if (!enumerateNext)
         return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -1250,8 +1277,6 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
     auto next = linkInfo->u.pLayerInfo;
     linkInfo->u.pLayerInfo = next->pNext;
 
-    g_nextInstanceProcAddr = next->pfnNextGetInstanceProcAddr;
-    g_nextPhysicalDeviceProcAddr = next->pfnNextGetPhysicalDeviceProcAddr;
     Debug("vkCreateInstance: calling next layer/driver");
 
     auto createNext = reinterpret_cast<PFN_vkCreateInstance>(
@@ -1262,9 +1287,22 @@ vkCreateInstance(const VkInstanceCreateInfo* createInfo,
 
     const VkResult result = createNext(createInfo, allocator, instance);
     if (result == VK_SUCCESS)
+    {
+        {
+            std::lock_guard lock(g_mutex);
+            g_instances[*instance] = InstanceDispatch{
+                next->pfnNextGetInstanceProcAddr,
+                next->pfnNextGetPhysicalDeviceProcAddr
+            };
+            if (!g_bootstrapInstanceProcAddr)
+                g_bootstrapInstanceProcAddr = next->pfnNextGetInstanceProcAddr;
+        }
         Debug("vkCreateInstance: success");
+    }
     else
+    {
         Debug("vkCreateInstance: failed");
+    }
     return result;
 }
 
@@ -1273,20 +1311,32 @@ vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator)
 {
     Debug("vkDestroyInstance");
 
-    if (g_nextInstanceProcAddr)
+    InstanceDispatch instanceDispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_instances.find(instance);
+        if (it != g_instances.end())
+            instanceDispatch = it->second;
+    }
+
+    if (instanceDispatch.GetInstanceProcAddr)
     {
         auto destroyNext = reinterpret_cast<PFN_vkDestroyInstance>(
-            g_nextInstanceProcAddr(instance, "vkDestroyInstance"));
+            instanceDispatch.GetInstanceProcAddr(instance, "vkDestroyInstance"));
         if (destroyNext)
             destroyNext(instance, allocator);
     }
 
-    for (auto it = g_physicalDeviceInstances.begin(); it != g_physicalDeviceInstances.end();)
     {
-        if (it->second == instance)
-            it = g_physicalDeviceInstances.erase(it);
-        else
-            ++it;
+        std::lock_guard lock(g_mutex);
+        g_instances.erase(instance);
+        for (auto it = g_physicalDeviceInstances.begin(); it != g_physicalDeviceInstances.end();)
+        {
+            if (it->second == instance)
+                it = g_physicalDeviceInstances.erase(it);
+            else
+                ++it;
+        }
     }
 }
 
@@ -1295,11 +1345,19 @@ vkEnumeratePhysicalDevices(VkInstance instance,
                            uint32_t* deviceCount,
                            VkPhysicalDevice* physicalDevices)
 {
-    if (!g_nextInstanceProcAddr)
-        return VK_ERROR_INITIALIZATION_FAILED;
+    InstanceDispatch instanceDispatch{};
+    {
+        std::lock_guard lock(g_mutex);
+        auto it = g_instances.find(instance);
+        if (it == g_instances.end())
+            return VK_ERROR_INITIALIZATION_FAILED;
+        instanceDispatch = it->second;
+    }
 
-    auto enumerateNext = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
-        g_nextInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"));
+    auto enumerateNext = instanceDispatch.GetInstanceProcAddr
+        ? reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
+            instanceDispatch.GetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"))
+        : nullptr;
     if (!enumerateNext)
         return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -1307,6 +1365,7 @@ vkEnumeratePhysicalDevices(VkInstance instance,
     if ((result == VK_SUCCESS || result == VK_INCOMPLETE) &&
         deviceCount && physicalDevices)
     {
+        std::lock_guard lock(g_mutex);
         for (uint32_t i = 0; i < *deviceCount; ++i)
             g_physicalDeviceInstances[physicalDevices[i]] = instance;
     }
@@ -1329,6 +1388,7 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
 
     VkInstance instance = VK_NULL_HANDLE;
     {
+        std::lock_guard lock(g_mutex);
         auto it = g_physicalDeviceInstances.find(physicalDevice);
         if (it != g_physicalDeviceInstances.end())
             instance = it->second;
@@ -2069,7 +2129,22 @@ vkGetInstanceProcAddr(VkInstance instance, const char* name)
     if (std::strcmp(name, "vk_layerGetPhysicalDeviceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vk_layerGetPhysicalDeviceProcAddr);
 
-    return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
+    PFN_vkGetInstanceProcAddr nextGipa = nullptr;
+    {
+        std::lock_guard lock(g_mutex);
+        if (instance != VK_NULL_HANDLE)
+        {
+            auto it = g_instances.find(instance);
+            if (it != g_instances.end())
+                nextGipa = it->second.GetInstanceProcAddr;
+        }
+        else
+        {
+            nextGipa = g_bootstrapInstanceProcAddr;
+        }
+    }
+
+    return nextGipa ? nextGipa(instance, name) : nullptr;
 }
 
 
@@ -2079,11 +2154,22 @@ vk_layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* name)
     if (!name)
         return nullptr;
 
-    if (g_nextPhysicalDeviceProcAddr)
+    InstanceDispatch instanceDispatch{};
     {
-        if (auto function = g_nextPhysicalDeviceProcAddr(instance, name))
+        std::lock_guard lock(g_mutex);
+        auto it = g_instances.find(instance);
+        if (it == g_instances.end())
+            return nullptr;
+        instanceDispatch = it->second;
+    }
+
+    if (instanceDispatch.GetPhysicalDeviceProcAddr)
+    {
+        if (auto function = instanceDispatch.GetPhysicalDeviceProcAddr(instance, name))
             return function;
     }
 
-    return g_nextInstanceProcAddr ? g_nextInstanceProcAddr(instance, name) : nullptr;
+    return instanceDispatch.GetInstanceProcAddr
+        ? instanceDispatch.GetInstanceProcAddr(instance, name)
+        : nullptr;
 }
