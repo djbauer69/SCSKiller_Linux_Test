@@ -1626,7 +1626,7 @@ bool Check(VkResult result, const char* operation)
 {
     if (result != VK_SUCCESS)
     {
-        std::cerr << operation << " failed: " << result << "\\n";
+        std::cerr << operation << " failed: " << result << "\n";
         return false;
     }
     return true;
@@ -1701,7 +1701,7 @@ int Run(const std::string& recordingPath,
     std::string error;
     if (!ParseRecording(recordingPath, recording, error))
     {
-        std::cerr << "Recording parse failed: " << error << "\\n";
+        std::cerr << "Recording parse failed: " << error << "\n";
         return 1;
     }
 
@@ -1711,7 +1711,7 @@ int Run(const std::string& recordingPath,
               << ", render passes: " << recording.renderPasses.size()
               << ", compute pipelines: " << recording.computePipelines.size()
               << ", graphics pipelines skipped: " << recording.graphicsPipelines
-              << ", ray-tracing pipelines skipped: " << recording.rayTracingPipelines << "\\n";
+              << ", ray-tracing pipelines skipped: " << recording.rayTracingPipelines << "\n";
 
     VkContext context;
 
@@ -1747,7 +1747,7 @@ int Run(const std::string& recordingPath,
     if (!Check(vkEnumeratePhysicalDevices(context.instance, &deviceCount, nullptr),
                "vkEnumeratePhysicalDevices(count)") || deviceCount == 0)
     {
-        std::cerr << "No Vulkan physical devices available\\n";
+        std::cerr << "No Vulkan physical devices available\n";
         DestroyContext(context);
         return 1;
     }
@@ -1823,7 +1823,7 @@ int Run(const std::string& recordingPath,
     }
     if (queueFamily == VK_QUEUE_FAMILY_IGNORED)
     {
-        std::cerr << "No graphics/compute queue family available\\n";
+        std::cerr << "No graphics/compute queue family available\n";
         DestroyContext(context);
         return 1;
     }
@@ -1915,11 +1915,11 @@ int Run(const std::string& recordingPath,
     {
         if (!recordedCacheMatchesDevice)
         {
-            std::cerr << "Warning: input pipeline cache UUID does not match the selected Vulkan device; starting empty\\n";
+            std::cerr << "Warning: input pipeline cache UUID does not match the selected Vulkan device; starting empty\n";
         }
         else if (!ReadBinaryFile(inputCachePath, inputCache))
         {
-            std::cerr << "Warning: could not read input cache; starting empty\\n";
+            std::cerr << "Warning: could not read input cache; starting empty\n";
         }
         else
         {
@@ -1932,7 +1932,7 @@ int Run(const std::string& recordingPath,
         context.device, &cacheInfo, nullptr, &context.cache);
     if (cacheResult != VK_SUCCESS && cacheInfo.initialDataSize != 0)
     {
-        std::cerr << "Warning: input pipeline cache was rejected by this device; starting empty\\n";
+        std::cerr << "Warning: input pipeline cache was rejected by this device; starting empty\n";
         cacheInfo.initialDataSize = 0;
         cacheInfo.pInitialData = nullptr;
         cacheResult = vkCreatePipelineCache(
@@ -1974,7 +1974,7 @@ int Run(const std::string& recordingPath,
         if (unsupported)
         {
             std::cerr << "Skipping descriptor layout " << std::hex << hash << std::dec
-                      << ": pNext or immutable-sampler state is not fully captured\\n";
+                      << ": pNext or immutable-sampler state is not fully captured\n";
             continue;
         }
 
@@ -2124,7 +2124,7 @@ int Run(const std::string& recordingPath,
         if (unsupported)
         {
             std::cerr << "Skipping pipeline layout " << std::hex << hash << std::dec
-                      << ": pNext or referenced descriptor-layout state is not fully captured\\n";
+                      << ": pNext or referenced descriptor-layout state is not fully captured\n";
             continue;
         }
 
@@ -2188,7 +2188,7 @@ int Run(const std::string& recordingPath,
         if (!record.replayCompatible)
         {
             ++skipped;
-            std::cerr << "Skipping compute pipeline: shader-stage or resource-layout pNext state is not fully captured\\n";
+            std::cerr << "Skipping compute pipeline: shader-stage or resource-layout pNext state is not fully captured\n";
             continue;
         }
 
@@ -2198,7 +2198,7 @@ int Run(const std::string& recordingPath,
         {
             ++skipped;
             std::cerr << "Skipping compute pipeline: missing reconstructible layout or shader "
-                      << std::hex << record.moduleHash << std::dec << "\\n";
+                      << std::hex << record.moduleHash << std::dec << "\n";
             continue;
         }
 
@@ -2242,7 +2242,7 @@ int Run(const std::string& recordingPath,
         else
         {
             ++failed;
-            std::cerr << "Compute pipeline replay failed: " << result << "\\n";
+            std::cerr << "Compute pipeline replay failed: " << result << "\n";
         }
     }
 
@@ -2644,13 +2644,13 @@ int Run(const std::string& recordingPath,
                 outputCachePath, outputCache.data(), outputCache.size()))
         {
             std::cerr << "Could not write output pipeline cache: "
-                      << outputCachePath << "\\n";
+                      << outputCachePath << "\n";
             ++failed;
         }
         else
         {
             std::cout << "Wrote pipeline cache: " << outputCachePath
-                      << " (" << outputCache.size() << " bytes)\\n";
+                      << " (" << outputCache.size() << " bytes)\n";
         }
     }
 
@@ -2658,7 +2658,7 @@ int Run(const std::string& recordingPath,
     std::cout << "Compute replay: requested " << total
               << ", compiled " << succeeded
               << ", skipped " << skipped
-              << ", failed " << failed << "\\n";
+              << ", failed " << failed << "\n";
 
     DestroyContext(context, descriptorLayouts, pipelineLayouts, shaderModules, renderPasses);
     return (failed == 0 && graphicsFailed == 0) ? 0 : 1;
@@ -2669,7 +2669,7 @@ int main(int argc, char** argv)
 {
     if (argc < 2 || argc > 4)
     {
-        std::cerr << "Usage: scskiller-vulkan-warmer <capture.jsonl> [input-cache.bin] [output-cache.bin]\\n";
+        std::cerr << "Usage: scskiller-vulkan-warmer <capture.jsonl> [input-cache.bin] [output-cache.bin]\n";
         return 2;
     }
 
