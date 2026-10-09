@@ -42,6 +42,10 @@ Kirigami.ApplicationWindow {
         backend.runCommand("inspect-vulkan", [capturePath.text])
     }
 
+    function planCapture() {
+        backend.runCommand("plan-vulkan", [capturePath.text])
+    }
+
     function warmCapture() {
         var warmArgs = [capturePath.text, "--output-cache", cachePath.text]
         if (requireComplete.checked)
@@ -210,6 +214,18 @@ Kirigami.ApplicationWindow {
                     icon.name: "document-properties"
                     onClicked: inspectCapture()
                 }
+
+                Controls.Button {
+                    Layout.fillWidth: true
+                    enabled: !backend.busy
+                    text: qsTr("Plan compatibility")
+                    icon.name: "view-list-details"
+                    onClicked: planCapture()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
 
                 Controls.Button {
                     Layout.fillWidth: true
