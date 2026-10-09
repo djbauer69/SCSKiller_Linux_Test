@@ -842,11 +842,18 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                 std::fputs(",\"dynamic_rendering\":null", file);
             }
 
+            const bool pipelinePnextPresent = info.pNext != nullptr;
             bool pipelinePnextSupported = true;
             for (const auto* pipelineNode = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
                  pipelineNode;
                  pipelineNode = pipelineNode->pNext)
             {
+                // Creation feedback is output-only metadata and can be omitted
+                // on replay. Dynamic-rendering state is captured below, but any
+                // nested pNext state still needs its own serializer.
+                if (pipelineNode->sType == VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO)
+                    continue;
+
                 if (pipelineNode->sType != VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO)
                 {
                     pipelinePnextSupported = false;
@@ -861,10 +868,13 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     break;
                 }
             }
-            if (info.basePipelineIndex >= 0)
-                pipelinePnextSupported = false;
-            std::fprintf(file, ",\"replay_compatible\":%s",
-                         pipelinePnextSupported ? "true" : "false");
+            const bool replayCompatible =
+                pipelinePnextSupported && info.basePipelineIndex < 0;
+            std::fprintf(file,
+                ",\"pipeline_pnext_present\":%s,\"pipeline_pnext_compatible\":%s,\"replay_compatible\":%s",
+                pipelinePnextPresent ? "true" : "false",
+                pipelinePnextSupported ? "true" : "false",
+                replayCompatible ? "true" : "false");
 
             if (info.pVertexInputState)
             {
@@ -2126,15 +2136,32 @@ vkCreateComputePipelines(VkDevice device,
                             layoutReplayCompatible = compatibilityIt->second;
                     }
                     const bool stagePnextPresent = info.stage.pNext != nullptr;
-                    const bool replayCompatible = layoutReplayCompatible && !stagePnextPresent;
+                    const bool pipelinePnextPresent = info.pNext != nullptr;
+                    bool pipelinePnextCompatible = true;
+                    for (const auto* pipelineNode = reinterpret_cast<const VkBaseInStructure*>(info.pNext);
+                         pipelineNode;
+                         pipelineNode = pipelineNode->pNext)
+                    {
+                        // Feedback is output-only; other pipeline-level pNext
+                        // structures are not reconstructed by the warmer.
+                        if (pipelineNode->sType != VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO)
+                        {
+                            pipelinePnextCompatible = false;
+                            break;
+                        }
+                    }
+                    const bool replayCompatible =
+                        layoutReplayCompatible && !stagePnextPresent && pipelinePnextCompatible;
                     std::fprintf(file,
-                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"stage_pnext_present\":%s,\"replay_compatible\":%s,\"specialization\":",
+                        "{\"layout_hash\":\"%016llx\",\"module_hash\":\"%016llx\",\"stage_flags\":%u,\"stage\":\"%s\",\"entry_point\":\"%s\",\"stage_pnext_present\":%s,\"pipeline_pnext_present\":%s,\"pipeline_pnext_compatible\":%s,\"replay_compatible\":%s,\"specialization\":",
                         static_cast<unsigned long long>(layoutHash),
                         static_cast<unsigned long long>(shaderHash),
                         info.stage.flags,
                         ShaderStageName(info.stage.stage),
                         info.stage.pName ? info.stage.pName : "main",
                         stagePnextPresent ? "true" : "false",
+                        pipelinePnextPresent ? "true" : "false",
+                        pipelinePnextCompatible ? "true" : "false",
                         replayCompatible ? "true" : "false");
                     RecordSpecialization(file, info.stage.pSpecializationInfo);
                     std::fprintf(file,
