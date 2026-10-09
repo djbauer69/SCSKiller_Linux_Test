@@ -244,6 +244,10 @@ jobs:
           STAGE: ${{ github.workspace }}/build/package-smoke
           BUILD_ROOT: ${{ github.workspace }}/build/package-native
         run: |
+          if STAGE="${GITHUB_WORKSPACE}" BUILD_ROOT="${GITHUB_WORKSPACE}/build/package-guard" bash scripts/package-linux.sh; then
+            echo "Packaging unexpectedly accepted the repository root as STAGE" >&2
+            exit 1
+          fi
           bash scripts/package-linux.sh
           test -x build/package-smoke/bin/scskiller-linux
           test -s build/package-smoke/lib/VK_LAYER_SCSKILLER.so
