@@ -259,7 +259,7 @@ static int InspectVulkanRecording(string path)
     Console.WriteLine($"Unique captured SPIR-V modules: {shaders}");
     Console.WriteLine($"Compute pipelines: {computePipelines}");
     Console.WriteLine($"Graphics pipelines: {graphics.Length} (dynamic rendering: {dynamicRendering}, marked incompatible: {incompatibleGraphics})");
-    Console.WriteLine($"Driver cache replays: {recording.CacheReplays}; skipped: {recording.CacheReplaySkips}");
+    Console.WriteLine($"Driver cache injections/merges: {recording.CacheReplays}; skipped: {recording.CacheReplaySkips}");
     Console.WriteLine($"Pipelines with missing SPIR-V bytes: {recording.Pipelines.Count(pipeline => pipeline.BackendMetadata is { } metadata && metadata.TryGetValue("missing_shader_hashes", out var missing) && !string.IsNullOrEmpty(missing))}");
     Console.WriteLine("Events:");
     foreach (var item in recording.EventCounts)
