@@ -63,7 +63,7 @@ A later run can seed an empty VkPipelineCache by passing the snapshot to the sta
 
     SCSKILLER_VK_REPLAY_CACHE=/path/to/capture.jsonl.cache.42.bin
 
-The layer only injects the snapshot when the application's own VkPipelineCacheCreateInfo has initialDataSize == 0. If the application supplies its own initial cache, it is left untouched.
+When the application requests an empty cache (initialDataSize == 0), the layer creates the cache from the validated snapshot. When the application supplies its own non-empty initial cache, the layer first creates that cache unchanged, creates a temporary cache from the validated SCSKiller snapshot, and merges the temporary cache into the application's cache with vkMergePipelineCaches. If the optional warmed-cache creation or merge fails, the original application cache remains valid and startup proceeds without replay. VkPipelineCacheCreateInfo calls with an unsupported pNext chain are left untouched.
 
 The cache blob is device/driver-specific. Before injection, the layer validates the standard cache header against the selected physical device's vendor ID, device ID, and pipeline-cache UUID, and skips injection if the header or cache-creation pNext chain is unsupported. A pipeline_cache_replay_skipped event marks that fallback; the application's own pipeline-cache creation then proceeds with an empty cache. Never assume these blobs are portable between different GPUs, drivers, or driver builds.
 
