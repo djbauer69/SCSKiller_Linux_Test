@@ -74,7 +74,7 @@ std::FILE* OpenRecordingAppend(const char* path)
     if (!path)
         return nullptr;
 
-    std::FILE* file = OpenRecordingAppend(path);
+    std::FILE* file = std::fopen(path, "ab");
     if (!file)
         return nullptr;
 
