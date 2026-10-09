@@ -266,6 +266,10 @@ public static class VulkanRecordingReader
             {
                 if (GetBoolean(state, "stage_pnext_present", false))
                     incompatibilityReasons.Add("unsupported-shader-stage-pnext");
+
+                if (GetBoolean(state, "pipeline_pnext_present", false) &&
+                    !GetBoolean(state, "pipeline_pnext_compatible", false))
+                    incompatibilityReasons.Add("unsupported-pipeline-pnext");
             }
 
             var compatible = incompatibilityReasons.Count == 0;
@@ -481,6 +485,10 @@ public static class VulkanRecordingReader
     private static bool HasUnsupportedPNext(JsonElement pipeline)
     {
         if (GetBoolean(pipeline, "pnext_present", false))
+            return true;
+
+        if (GetBoolean(pipeline, "pipeline_pnext_present", false) &&
+            !GetBoolean(pipeline, "pipeline_pnext_compatible", false))
             return true;
 
         var dynamicRendering = GetObjectProperty(pipeline, "dynamic_rendering");
