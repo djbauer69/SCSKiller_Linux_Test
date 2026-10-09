@@ -41,9 +41,9 @@
 
 
 > [!NOTE]
-> **Experimental Linux port:** the `linux-vulkan-proton` branch is an experimental community port. It is not a replacement for the Windows release yet. The current work targets native Vulkan plus Proton's vkd3d-proton and DXVK paths, with a common Vulkan runtime recorder and a future Qt/Kirigami UI.
+> **Experimental Linux port:** the `linux-vulkan-proton` branch is an experimental community port, not a replacement for the Windows release yet. It now has a common Vulkan runtime recorder and warmer, managed Linux CLI, native/Proton cache-injection launchers, and an experimental Qt/Kirigami desktop UI. Core Vulkan capture/replay fixtures are exercised in CI, but a real game's full pipeline set and performance on a physical CachyOS gaming system have not yet been validated.
 >
-> See [LINUX.md](LINUX.md) for the architecture and current implementation status.
+> See [LINUX.md](LINUX.md) for the current architecture, build/package instructions, and capture → inspect → warm → relaunch workflow. The KDE UI build notes are in [gui/kde/README.md](gui/kde/README.md).
 
 ## Why
 
