@@ -73,6 +73,9 @@ public sealed class VulkanCapturePlanner : IVulkanCapturePlanner
             reasonCounts);
     }
 
-    private static void Increment(IDictionary<string, int> counts, string key) =>
-        counts[key] = counts.GetValueOrDefault(key) + 1;
+    private static void Increment(IDictionary<string, int> counts, string key)
+    {
+        counts.TryGetValue(key, out var current);
+        counts[key] = current + 1;
+    }
 }
