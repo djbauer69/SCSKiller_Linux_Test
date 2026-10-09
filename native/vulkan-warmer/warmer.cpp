@@ -764,14 +764,6 @@ bool ParseGraphicsPipelineState(
         if (FindBool(entry, "replay_compatible", compatible))
             record.replayCompatible = compatible;
 
-        bool legacyRenderPass = false;
-        if (!record.dynamicRendering &&
-            FindBool(entry, "legacy_render_pass", legacyRenderPass) &&
-            !legacyRenderPass)
-        {
-            record.replayCompatible = false;
-        }
-
         std::string_view dynamicRendering;
         if (ExtractObject(entry, "dynamic_rendering", dynamicRendering))
         {
@@ -795,19 +787,24 @@ bool ParseGraphicsPipelineState(
                 const std::string formatEntry = Trim(std::string(formatText));
                 if (formatEntry.empty())
                     continue;
-                if (!FindSigned(formatEntry, "value", signedValue))
+                try
                 {
-                    try
-                    {
-                        record.colorFormats.push_back(
-                            static_cast<VkFormat>(std::stol(formatEntry)));
-                    }
-                    catch (...)
-                    {
-                        return false;
-                    }
+                    record.colorFormats.push_back(
+                        static_cast<VkFormat>(std::stol(formatEntry)));
+                }
+                catch (...)
+                {
+                    return false;
                 }
             }
+        }
+
+        bool legacyRenderPass = false;
+        if (!record.dynamicRendering &&
+            FindBool(entry, "legacy_render_pass", legacyRenderPass) &&
+            !legacyRenderPass)
+        {
+            record.replayCompatible = false;
         }
 
         std::string_view stages;
