@@ -99,3 +99,24 @@ Before replaying a game capture, summarize the recorded GPU and the pipeline cov
 The report lists captured SPIR-V modules, compute and graphics pipelines, dynamic-rendering pipelines, state marked incompatible, and cache replay events. It is a diagnostic count, not a guarantee that every pipeline from a full game is reconstructible; the warmer's compiled/skipped/failed totals remain the final check.
 
 By default, `warm-vulkan` reports skipped pipelines but exits successfully if Vulkan itself completed without a pipeline-creation error. Add `--require-complete` when you need a strict pass/fail result: the command returns a nonzero status if any compute/graphics pipeline was skipped or failed, the output summary is missing, or ray-tracing pipelines remain unsupported.
+
+
+## Warm and relaunch with the recorded Vulkan cache
+
+A practical test cycle is capture, inspect, warm, then launch again with cache injection enabled. Use a second launch to exercise the cache warmed from the first run:
+
+For a native Vulkan app:
+
+    scskiller-linux record-vulkan ./game "$PWD" "$SCSKILLER_HOME/share/vulkan/explicit_layer.d" capture.jsonl
+    scskiller-linux inspect-vulkan capture.jsonl
+    scskiller-linux warm-vulkan capture.jsonl --output-cache warmed.cache.bin --require-complete
+    scskiller-linux run-vulkan ./game "$PWD" "$SCSKILLER_HOME/share/vulkan/explicit_layer.d" warmed.cache.bin
+
+For a Windows game launched through Proton:
+
+    scskiller-linux record-proton /path/to/proton /path/to/compatdata /path/to/game-directory game.exe "$SCSKILLER_HOME/share/vulkan/explicit_layer.d" capture.jsonl
+    scskiller-linux inspect-vulkan capture.jsonl
+    scskiller-linux warm-vulkan capture.jsonl --output-cache warmed.cache.bin --require-complete
+    scskiller-linux run-proton-vulkan /path/to/proton /path/to/compatdata /path/to/game-directory game.exe "$SCSKILLER_HOME/share/vulkan/explicit_layer.d" warmed.cache.bin
+
+Replace the example executable, Proton, compatdata, and working-directory paths with those for the installed game. The warmed cache is created by the currently selected Vulkan driver and is not a portable shader archive. The layer injects it only when the app asks for an empty `VkPipelineCache`; a game-supplied non-empty cache remains untouched. If strict warming reports skipped pipelines, do not treat that cache as a complete warm-up. A real-game validation run should compare first-launch and subsequent-launch behavior and inspect the capture for unsupported state.
