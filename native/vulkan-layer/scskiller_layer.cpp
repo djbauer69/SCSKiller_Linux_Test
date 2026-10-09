@@ -2292,8 +2292,8 @@ vkCreatePipelineCache(VkDevice device,
 
     if (!dispatch.MergePipelineCaches || !dispatch.DestroyPipelineCache)
     {
-        Debug("pipeline cache replay skipped: cache merge entry points unavailable");
-        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        Debug("pipeline cache merge skipped: cache merge entry points unavailable");
+        RecordCount("pipeline_cache_merge_skipped", g_sequence.fetch_add(1), 1);
         return VK_SUCCESS;
     }
 
@@ -2302,8 +2302,8 @@ vkCreatePipelineCache(VkDevice device,
         dispatch.CreatePipelineCache(device, &replayInfo, allocator, &warmCache);
     if (warmResult != VK_SUCCESS)
     {
-        Debug("pipeline cache replay skipped: driver rejected temporary warmed cache");
-        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        Debug("pipeline cache merge skipped: driver rejected temporary warmed cache");
+        RecordCount("pipeline_cache_merge_skipped", g_sequence.fetch_add(1), 1);
         return VK_SUCCESS;
     }
 
@@ -2313,12 +2313,12 @@ vkCreatePipelineCache(VkDevice device,
 
     if (mergeResult == VK_SUCCESS)
     {
-        RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+        RecordCount("pipeline_cache_merge", g_sequence.fetch_add(1), 1);
     }
     else
     {
-        Debug("pipeline cache replay skipped: driver could not merge the warmed cache");
-        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        Debug("pipeline cache merge skipped: driver could not merge the warmed cache");
+        RecordCount("pipeline_cache_merge_skipped", g_sequence.fetch_add(1), 1);
     }
 
     return VK_SUCCESS;
