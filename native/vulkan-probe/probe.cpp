@@ -624,7 +624,9 @@ int main(int argc, char** argv)
 
         VkGraphicsPipelineCreateInfo graphicsInfo{
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            dynamicGraphicsMode ? &renderingInfo : &feedbackInfo,
+            dynamicGraphicsMode
+                ? static_cast<const void*>(&renderingInfo)
+                : static_cast<const void*>(&feedbackInfo),
             0,
             2,
             stages,
