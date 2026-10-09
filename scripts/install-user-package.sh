@@ -19,7 +19,7 @@ fi
 
 DEST="$(realpath -m -- "$DEST")"
 HOME_REAL="$(realpath -- "$HOME")"
-if [[ "$DEST" == "/" || "$DEST" == "$HOME_REAL" || "$DEST" == "$SOURCE" || "$SOURCE" == "$DEST"/* ]]; then
+if [[ "$DEST" == "/" || "$DEST" == "$HOME_REAL" || "$DEST" == "$SOURCE" || "$DEST" == "$SOURCE"/* || "$SOURCE" == "$DEST"/* ]]; then
     printf 'Refusing unsafe or recursive installation directory: %s\n' "$DEST" >&2
     exit 2
 fi
