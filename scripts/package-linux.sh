@@ -13,7 +13,7 @@ require_command() {
     fi
 }
 
-for command in cmake ninja dotnet glslc; do
+for command in cmake ninja dotnet realpath; do
     require_command "$command"
 done
 
@@ -21,6 +21,13 @@ if ! pkg-config --exists vulkan 2>/dev/null && \
    [[ ! -f /usr/include/vulkan/vulkan.h ]] && \
    [[ ! -f /usr/local/include/vulkan/vulkan.h ]]; then
     printf 'Vulkan development headers were not found. Install your distribution Vulkan SDK/development package first.\n' >&2
+    exit 2
+fi
+
+ROOT_REAL="$(realpath "$ROOT")"
+STAGE_REAL="$(realpath -m -- "$STAGE")"
+if [[ "$STAGE_REAL" == "/" || "$STAGE_REAL" == "$ROOT_REAL" || "$STAGE_REAL" == "$HOME" ]]; then
+    printf 'Refusing unsafe package staging directory: %s\n' "$STAGE_REAL" >&2
     exit 2
 fi
 
