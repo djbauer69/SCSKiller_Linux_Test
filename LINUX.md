@@ -78,7 +78,7 @@ On a development machine with CMake, Ninja, .NET 10 SDK, Vulkan development head
 
     bash scripts/package-linux.sh
 
-This stages a self-contained directory layout at `dist/scskiller-linux`. The managed CLI is published self-contained for `linux-x64` or `linux-arm64`, so a separate .NET runtime is not required on the target machine. The launcher is `dist/scskiller-linux/bin/scskiller-linux`; the Vulkan layer manifest, shared library, native warmer, and docs are staged alongside it. Override `STAGE` or `BUILD_ROOT` to choose other output directories.
+This stages a self-contained directory layout at `dist/scskiller-linux`. The managed CLI is published self-contained for `linux-x64` or `linux-arm64`, so a separate .NET runtime is not required on the target machine. Set `BUILD_KDE_UI=1` to also compile and stage `scskiller-kde` with its desktop entry; this requires Qt 6 and KDE Kirigami at build time, and their runtime libraries on the target. The launcher is `dist/scskiller-linux/bin/scskiller-linux`; the Vulkan layer manifest, shared library, native warmer, and docs are staged alongside it. Override `STAGE` or `BUILD_ROOT` to choose other output directories.
 
 Example capture command from the source checkout:
 
