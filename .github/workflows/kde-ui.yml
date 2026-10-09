@@ -111,6 +111,112 @@ jobs:
             echo "Installed QML runtime loading reported an error" >&2
             exit 1
           fi
+          # Reinstalling over our recognized installation should be safe and idempotent.
+          HOME="$install_home" \
+            DEST="$install_root" \
+            BIN_DIR="$install_home/.local/bin" \
+            APPLICATIONS_DIR="$install_home/.local/share/applications" \
+            bash build/package-kde/install-user-package.sh "$GITHUB_WORKSPACE/build/package-kde"
+          test -x "$install_root/bin/scskiller-kde"
+          grep -F "Exec=\"$install_root/bin/scskiller-kde\"" "$install_home/.local/share/applications/scskiller-kde.desktop"
+      - name: Ensure user installer preserves unrelated files and symlinks
+        run: |
+          source_package="$GITHUB_WORKSPACE/build/package-kde"
+          test_root="$GITHUB_WORKSPACE/build/installer-safety"
+          mkdir -p "$test_root/unsafe-home/.local/opt/scskiller-linux"
+          printf 'keep me\\n' > "$test_root/unsafe-home/.local/opt/scskiller-linux/user-data.txt"
+          if HOME="$test_root/unsafe-home" \
+            DEST="$test_root/unsafe-home/.local/opt/scskiller-linux" \
+            BIN_DIR="$test_root/unsafe-home/.local/bin" \
+            APPLICATIONS_DIR="$test_root/unsafe-home/.local/share/applications" \
+            bash "$source_package/install-user-package.sh" "$source_package" > "$test_root/unsafe-dest.log" 2>&1; then
+            echo "Installer unexpectedly accepted an unrelated non-empty directory" >&2
+            exit 1
+          fi
+          grep -q 'Refusing to copy over an unrelated non-empty directory' "$test_root/unsafe-dest.log"
+          grep -q '^keep me
+        uses: actions/upload-artifact@v4
+        with:
+          name: scskiller-linux-kde-${{ github.sha }}
+          path: build/package-kde/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Smoke-load the QML application
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          timeout 8s build/kde-ui/scskiller-kde > build/kde-ui-smoke.log 2>&1
+          status=$?
+          set -e
+          cat build/kde-ui-smoke.log
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "KDE UI exited unexpectedly with status $status" >&2
+            exit 1
+          fi
+          if grep -Eiq 'module .* is not installed|type .* unavailable|referenceerror|failed to load .*qml|cannot assign to non-existent property' build/kde-ui-smoke.log; then
+            echo "QML runtime loading reported an error" >&2
+            exit 1
+          fi
+ "$test_root/unsafe-home/.local/opt/scskiller-linux/user-data.txt"
+          test ! -e "$test_root/unsafe-home/.local/bin/scskiller-linux"
+
+          mkdir -p "$test_root/symlink-home/.local/opt"
+          mkdir -p "$test_root/symlink-home/.local/bin"
+          ln -s /usr/bin/false "$test_root/symlink-home/.local/bin/scskiller-linux"
+          if HOME="$test_root/symlink-home" \
+            DEST="$test_root/symlink-home/.local/opt/scskiller-linux" \
+            BIN_DIR="$test_root/symlink-home/.local/bin" \
+            APPLICATIONS_DIR="$test_root/symlink-home/.local/share/applications" \
+            bash "$source_package/install-user-package.sh" "$source_package" > "$test_root/unsafe-link.log" 2>&1; then
+            echo "Installer unexpectedly replaced an unrelated CLI symlink" >&2
+            exit 1
+          fi
+          grep -q 'Refusing to replace a symlink owned by another application' "$test_root/unsafe-link.log"
+          test "$(readlink "$test_root/symlink-home/.local/bin/scskiller-linux")" = "/usr/bin/false"
+          test ! -e "$test_root/symlink-home/.local/opt/scskiller-linux"
+
+          mkdir -p "$test_root/desktop-home/.local/share/applications"
+          cat > "$test_root/desktop-home/.local/share/applications/scskiller-kde.desktop" <<'EOF'
+          [Desktop Entry]
+          Name=Unrelated application
+          Exec=/usr/bin/true
+          EOF
+          if HOME="$test_root/desktop-home" \
+            DEST="$test_root/desktop-home/.local/opt/scskiller-linux" \
+            BIN_DIR="$test_root/desktop-home/.local/bin" \
+            APPLICATIONS_DIR="$test_root/desktop-home/.local/share/applications" \
+            bash "$source_package/install-user-package.sh" "$source_package" > "$test_root/unsafe-desktop.log" 2>&1; then
+            echo "Installer unexpectedly replaced an unrelated desktop entry" >&2
+            exit 1
+          fi
+          grep -q 'Refusing to replace an unrelated desktop entry' "$test_root/unsafe-desktop.log"
+          grep -q '^Name=Unrelated application
+        uses: actions/upload-artifact@v4
+        with:
+          name: scskiller-linux-kde-${{ github.sha }}
+          path: build/package-kde/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Smoke-load the QML application
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          timeout 8s build/kde-ui/scskiller-kde > build/kde-ui-smoke.log 2>&1
+          status=$?
+          set -e
+          cat build/kde-ui-smoke.log
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "KDE UI exited unexpectedly with status $status" >&2
+            exit 1
+          fi
+          if grep -Eiq 'module .* is not installed|type .* unavailable|referenceerror|failed to load .*qml|cannot assign to non-existent property' build/kde-ui-smoke.log; then
+            echo "QML runtime loading reported an error" >&2
+            exit 1
+          fi
+ "$test_root/desktop-home/.local/share/applications/scskiller-kde.desktop"
+          test ! -e "$test_root/desktop-home/.local/opt/scskiller-linux"
       - name: Upload KDE-enabled Linux package
         uses: actions/upload-artifact@v4
         with:
