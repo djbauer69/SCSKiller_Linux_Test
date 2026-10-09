@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace SCSKiller.Graphics;
@@ -27,7 +29,12 @@ public sealed record VulkanRecordingReadResult(
 /// </summary>
 public static class VulkanRecordingReader
 {
-    private sealed record CapturedPipeline(string EventName, long Sequence, string Kind, JsonElement State);
+    private sealed record CapturedPipeline(
+        string EventName,
+        long Sequence,
+        int IndexInEvent,
+        string Kind,
+        JsonElement State);
 
     public static VulkanRecordingReadResult Read(
         string recordingPath,
@@ -133,8 +140,16 @@ public static class VulkanRecordingReader
 
                         var kind = eventName == "compute_pipeline_state" ? "compute" : "graphics";
                         var sequence = GetInt64(root, "sequence") ?? 0;
+                        var indexInEvent = 0;
                         foreach (var pipeline in pipelines.EnumerateArray())
-                            capturedPipelines.Add(new CapturedPipeline(eventName, sequence, kind, pipeline.Clone()));
+                        {
+                            capturedPipelines.Add(new CapturedPipeline(
+                                eventName,
+                                sequence,
+                                indexInEvent++,
+                                kind,
+                                pipeline.Clone()));
+                        }
                         break;
                     }
                     case "physical_device_identity":
@@ -264,19 +279,26 @@ public static class VulkanRecordingReader
                 descriptorLayouts,
                 renderPasses);
 
+            var rawPipelineState = state.GetRawText();
+            var pipelineId = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(rawPipelineState)))
+                .ToLowerInvariant()[..16];
+
             var backendMetadata = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["graphics_api"] = "Vulkan",
                 ["pipeline_kind"] = captured.Kind,
+                ["pipeline_id"] = pipelineId,
                 ["source_event"] = captured.EventName,
                 ["capture_sequence"] = captured.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["capture_pipeline_index"] = captured.IndexInEvent.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["layout_hash"] = layoutHash ?? string.Empty,
                 ["render_pass_hash"] = renderPassHash ?? string.Empty,
                 ["dynamic_rendering"] = isDynamicRendering ? "true" : "false",
                 ["replay_compatible"] = compatible ? "true" : "false",
                 ["missing_shader_hashes"] = string.Join(",", pipelineMissingHashes.Order(StringComparer.OrdinalIgnoreCase)),
                 ["replay_incompatibility_reasons"] = string.Join(";", incompatibilityReasons),
-                ["raw_pipeline_state_json"] = state.GetRawText()
+                ["raw_pipeline_state_json"] = rawPipelineState
             };
 
             descriptions.Add(new PipelineDescription(
