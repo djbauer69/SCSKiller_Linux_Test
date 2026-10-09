@@ -120,7 +120,7 @@ switch (args[0])
         var capture = args[1];
         string? inputCache = null;
         string? outputCache = null;
-        var nativeWarmer = Path.Combine(AppContext.BaseDirectory, "scskiller-vulkan-warmer");
+        var nativeWarmer = FindNativeWarmerExecutable();
 
         for (var i = 2; i < args.Length; i++)
         {
@@ -221,4 +221,17 @@ static int InspectVulkanRecording(string path)
         Console.WriteLine($"  {item.Key}: {item.Value}");
 
     return 0;
+}
+
+static string FindNativeWarmerExecutable()
+{
+    var packageRoot = Environment.GetEnvironmentVariable("SCSKILLER_HOME");
+    if (!string.IsNullOrWhiteSpace(packageRoot))
+    {
+        var packagedWarmer = Path.Combine(packageRoot, "bin", "scskiller-vulkan-warmer");
+        if (File.Exists(packagedWarmer))
+            return packagedWarmer;
+    }
+
+    return Path.Combine(AppContext.BaseDirectory, "scskiller-vulkan-warmer");
 }
