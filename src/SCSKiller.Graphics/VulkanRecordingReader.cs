@@ -483,6 +483,11 @@ public static class VulkanRecordingReader
         if (GetBoolean(pipeline, "pnext_present", false))
             return true;
 
+        var dynamicRendering = GetObjectProperty(pipeline, "dynamic_rendering");
+        if (dynamicRendering is not null &&
+            GetBoolean(dynamicRendering.Value, "pnext_present", false))
+            return true;
+
         if (pipeline.TryGetProperty("stages", out var stages) &&
             stages.ValueKind == JsonValueKind.Array &&
             stages.EnumerateArray().Any(stage => GetBoolean(stage, "pnext_present", false)))
