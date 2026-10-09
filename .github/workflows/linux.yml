@@ -304,8 +304,8 @@ jobs:
             plan-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl > build/vulkan-smoke/ray-tracing-plan.log
           grep -q 'Pipeline plan: 3 total; 1 replayable; 2 unsupported' build/vulkan-smoke/ray-tracing-plan.log
           grep -q 'Unsupported: compute 0, graphics 0, ray-tracing 2' build/vulkan-smoke/ray-tracing-plan.log
-          grep -q 'ray-tracing-pipeline-state-not-captured: 2' build/vulkan-smoke/ray-tracing-plan.log
-          grep -Eq 'ray-tracing id=[0-9a-f]{16} status=unsupported.*reasons=ray-tracing-pipeline-state-not-captured' build/vulkan-smoke/ray-tracing-plan.log
+          grep -q 'ray-tracing-pipeline-replay-not-implemented: 2' build/vulkan-smoke/ray-tracing-plan.log
+          grep -Eq 'ray-tracing id=[0-9a-f]{16} status=unsupported.*reasons=ray-tracing-pipeline-replay-not-implemented' build/vulkan-smoke/ray-tracing-plan.log
           if timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             warm-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl \
             --warmer build/vulkan-warmer/scskiller-vulkan-warmer \
@@ -315,6 +315,84 @@ jobs:
           fi
           grep -q 'ray-tracing pipelines skipped: 2' build/vulkan-smoke/ray-tracing-strict.log
           grep -q 'Incomplete Vulkan replay:' build/vulkan-smoke/ray-tracing-strict.log
+
+      - name: Prefer detailed ray-tracing state without double-counting legacy events
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          source = Path("build/vulkan-smoke/capture.jsonl")
+          target = Path("build/vulkan-smoke/ray-tracing-detailed-capture.jsonl")
+          events = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+          shader_event = next(e for e in events if e.get("event") == "shader_module_code")
+          shader_hash = shader_event["hash"]
+
+          # The older count event and newer detailed event share a process/sequence
+          # identity. Managed parsing must prefer details rather than count twice.
+          events.append({
+              "schema": 2,
+              "event": "ray_tracing_pipeline_create",
+              "process_id": 12345,
+              "sequence": 777,
+              "count": 2
+          })
+
+          def pipeline(index):
+              return {
+                  "flags": 0,
+                  "layout_hash": "0000000000000000",
+                  "stage_count": 1,
+                  "stages": [{
+                      "stage": "raygen",
+                      "stage_flags": 0,
+                      "module_hash": shader_hash,
+                      "entry_point": "main",
+                      "pnext_present": False,
+                      "specialization": None
+                  }],
+                  "group_count": 1,
+                  "groups": [{
+                      "type": 0,
+                      "general_shader": 0,
+                      "closest_hit_shader": 0,
+                      "any_hit_shader": 0,
+                      "intersection_shader": 0,
+                      "pnext_present": False
+                  }],
+                  "max_pipeline_ray_recursion_depth": 1,
+                  "base_pipeline_index": -1,
+                  "base_pipeline_handle_present": False,
+                  "pipeline_pnext_types": [],
+                  "library_info_present": False,
+                  "library_count": 0,
+                  "library_interface": None,
+                  "dynamic_state_count": 0,
+                  "dynamic_states": [],
+                  "replay_compatible": False,
+                  "replay_incompatibility_reason": "ray-tracing-pipeline-replay-not-implemented",
+                  "test_pipeline_index": index
+              }
+
+          events.append({
+              "schema": 3,
+              "event": "ray_tracing_pipeline_state",
+              "process_id": 12345,
+              "sequence": 777,
+              "count": 2,
+              "pipelines": [pipeline(0), pipeline(1)]
+          })
+          target.write_text("\n".join(json.dumps(e, separators=(",", ":")) for e in events) + "\n")
+          PY
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/ray-tracing-detailed-capture.jsonl > build/vulkan-smoke/ray-tracing-detailed-inspect.log
+          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2)' build/vulkan-smoke/ray-tracing-detailed-inspect.log
+          grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/ray-tracing-detailed-inspect.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/ray-tracing-detailed-capture.jsonl > build/vulkan-smoke/ray-tracing-detailed-plan.log
+          grep -q 'Pipeline plan: 3 total; 1 replayable; 2 unsupported' build/vulkan-smoke/ray-tracing-detailed-plan.log
+          grep -q 'ray-tracing-pipeline-replay-not-implemented: 2' build/vulkan-smoke/ray-tracing-detailed-plan.log
+          test "$(grep -E 'ray-tracing id=[0-9a-f]{16} status=unsupported' build/vulkan-smoke/ray-tracing-detailed-plan.log | wc -l)" -eq 2
 
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
