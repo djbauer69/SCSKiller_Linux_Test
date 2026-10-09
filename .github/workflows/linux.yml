@@ -389,7 +389,17 @@ jobs:
           test -s build/package-smoke/share/doc/scskiller-linux/LICENSE-EXCEPTION.txt
           test -s build/package-smoke/share/doc/scskiller-linux/THIRD-PARTY-NOTICES.md
           test -x build/package-smoke/bin/scskiller-vulkan-warmer
+          test -x build/package-smoke/install-user-package.sh
           build/package-smoke/bin/scskiller-linux help
+          install_home="${GITHUB_WORKSPACE}/build/package-install-home"
+          HOME="$install_home" \
+            DEST="$install_home/.local/opt/scskiller-linux" \
+            BIN_DIR="$install_home/.local/bin" \
+            APPLICATIONS_DIR="$install_home/.local/share/applications" \
+            bash build/package-smoke/install-user-package.sh "$GITHUB_WORKSPACE/build/package-smoke"
+          test -x "$install_home/.local/opt/scskiller-linux/bin/scskiller-linux"
+          test -L "$install_home/.local/bin/scskiller-linux"
+          "$install_home/.local/bin/scskiller-linux" help
           timeout 60s build/package-smoke/bin/scskiller-linux warm-vulkan build/vulkan-smoke/capture.jsonl \
             --output-cache build/vulkan-smoke/package-warmed.cache.bin
           test -s build/vulkan-smoke/package-warmed.cache.bin
