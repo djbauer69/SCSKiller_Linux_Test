@@ -592,7 +592,20 @@ std::string JsonEscape(std::string_view value)
         case '\n': out += "\\n"; break;
         case '\r': out += "\\r"; break;
         case '\t': out += "\\t"; break;
-        default: out.push_back(c); break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20)
+            {
+                static constexpr char hex[] = "0123456789abcdef";
+                const auto byte = static_cast<unsigned char>(c);
+                out += "\\u00";
+                out.push_back(hex[(byte >> 4) & 0x0f]);
+                out.push_back(hex[byte & 0x0f]);
+            }
+            else
+            {
+                out.push_back(c);
+            }
+            break;
         }
     }
     return out;
