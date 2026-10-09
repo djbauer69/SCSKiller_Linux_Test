@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${CONFIG:-Release}"
+BUILD_KDE_UI="${BUILD_KDE_UI:-0}"
 BUILD_ROOT="${BUILD_ROOT:-$ROOT/build/linux-package}"
 STAGE="${STAGE:-$ROOT/dist/scskiller-linux}"
 
@@ -88,6 +89,18 @@ install -m 0644 "$ROOT/LICENSE" "$STAGE/share/doc/scskiller-linux/LICENSE"
 install -m 0644 "$ROOT/LICENSE-EXCEPTION.txt" "$STAGE/share/doc/scskiller-linux/LICENSE-EXCEPTION.txt"
 install -m 0644 "$ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/share/doc/scskiller-linux/THIRD-PARTY-NOTICES.md"
 
+if [[ "$BUILD_KDE_UI" == "1" ]]; then
+    printf '[optional] Building and installing the Qt/Kirigami desktop app...\n'
+    cmake -S "$ROOT/gui/kde" \
+        -B "$BUILD_ROOT/kde-ui" -G Ninja \
+        -DCMAKE_BUILD_TYPE="$CONFIG"
+    cmake --build "$BUILD_ROOT/kde-ui" --parallel
+    cmake --install "$BUILD_ROOT/kde-ui" --prefix "$STAGE"
+elif [[ "$BUILD_KDE_UI" != "0" ]]; then
+    printf 'BUILD_KDE_UI must be 0 or 1, got: %s\n' "$BUILD_KDE_UI" >&2
+    exit 2
+fi
+
 if git -C "$ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
     VERSION="$(git -C "$ROOT" rev-parse --short HEAD)"
 else
@@ -99,3 +112,6 @@ printf 'version=%s\nconfiguration=%s\n' "$VERSION" "$CONFIG" \
 printf '\nPackage staged at:\n  %s\n' "$STAGE"
 printf 'Launcher:\n  %s/bin/scskiller-linux\n' "$STAGE"
 printf 'Required at runtime: a working Vulkan loader and GPU driver/ICD. The managed CLI runtime is bundled.\n'
+if [[ "$BUILD_KDE_UI" == "1" ]]; then
+    printf 'KDE UI included; Qt 6 and KDE Kirigami runtime libraries must be installed.\n'
+fi
