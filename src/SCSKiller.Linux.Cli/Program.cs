@@ -1,5 +1,4 @@
 using SCSKiller.Graphics;
-using System.Text.Json;
 
 if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
 {
@@ -171,127 +170,55 @@ switch (args[0])
 }
 static int InspectVulkanRecording(string path)
 {
-    if (!File.Exists(path))
-    {
-        Console.Error.WriteLine($"Vulkan recording was not found: {path}");
-        return 2;
-    }
-
-    var eventCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
-    var shaderHashes = new HashSet<string>(StringComparer.Ordinal);
-    string? gpuName = null;
-    string? cacheUuid = null;
-    uint vendorId = 0;
-    uint deviceId = 0;
-    uint driverVersion = 0;
-    long computePipelines = 0;
-    long graphicsPipelines = 0;
-    long dynamicRenderingPipelines = 0;
-    long incompatibleGraphicsPipelines = 0;
-    long replayedCaches = 0;
-    long skippedCaches = 0;
-    var lineNumber = 0;
-
+    VulkanRecordingReadResult recording;
     try
     {
-        foreach (var line in File.ReadLines(path))
-        {
-            lineNumber++;
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            using var document = JsonDocument.Parse(line);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("event", out var eventProperty) ||
-                eventProperty.ValueKind != JsonValueKind.String)
-            {
-                Console.Error.WriteLine($"Malformed recording at line {lineNumber}: missing event name.");
-                return 2;
-            }
-
-            var eventName = eventProperty.GetString()!;
-            eventCounts[eventName] = eventCounts.GetValueOrDefault(eventName) + 1;
-
-            if (eventName == "shader_module_code" &&
-                root.TryGetProperty("hash", out var hashProperty) &&
-                hashProperty.ValueKind == JsonValueKind.String)
-            {
-                shaderHashes.Add(hashProperty.GetString()!);
-            }
-
-            if (eventName == "physical_device_identity")
-            {
-                if (root.TryGetProperty("device_name", out var nameProperty) &&
-                    nameProperty.ValueKind == JsonValueKind.String)
-                    gpuName = nameProperty.GetString();
-                if (root.TryGetProperty("pipeline_cache_uuid", out var uuidProperty) &&
-                    uuidProperty.ValueKind == JsonValueKind.String)
-                    cacheUuid = uuidProperty.GetString();
-                if (root.TryGetProperty("vendor_id", out var property) && property.TryGetUInt32(out var parsedVendor))
-                    vendorId = parsedVendor;
-                if (root.TryGetProperty("device_id", out property) && property.TryGetUInt32(out var parsedDevice))
-                    deviceId = parsedDevice;
-                if (root.TryGetProperty("driver_version", out property) && property.TryGetUInt32(out var parsedDriver))
-                    driverVersion = parsedDriver;
-            }
-
-            if (eventName == "compute_pipeline_state" &&
-                root.TryGetProperty("pipelines", out var computeArray) &&
-                computeArray.ValueKind == JsonValueKind.Array)
-            {
-                computePipelines += computeArray.GetArrayLength();
-            }
-
-            if (eventName == "graphics_pipeline_state" &&
-                root.TryGetProperty("pipelines", out var graphicsArray) &&
-                graphicsArray.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var pipeline in graphicsArray.EnumerateArray())
-                {
-                    graphicsPipelines++;
-                    if (pipeline.TryGetProperty("dynamic_rendering", out var dynamicRendering) &&
-                        dynamicRendering.ValueKind == JsonValueKind.Object)
-                        dynamicRenderingPipelines++;
-
-                    if (pipeline.TryGetProperty("replay_compatible", out var compatible) &&
-                        compatible.ValueKind == JsonValueKind.False)
-                        incompatibleGraphicsPipelines++;
-                }
-            }
-
-            if (eventName == "pipeline_cache_replay")
-                replayedCaches += ReadCount(root);
-            if (eventName == "pipeline_cache_replay_skipped")
-                skippedCaches += ReadCount(root);
-        }
+        recording = VulkanRecordingReader.Read(path);
     }
-    catch (JsonException exception)
+    catch (Exception exception) when (
+        exception is IOException or InvalidDataException or ArgumentException)
     {
-        Console.Error.WriteLine($"Invalid JSON at recording line {lineNumber}: {exception.Message}");
-        return 2;
-    }
-    catch (IOException exception)
-    {
-        Console.Error.WriteLine($"Could not read Vulkan recording: {exception.Message}");
+        Console.Error.WriteLine($"Could not inspect Vulkan recording: {exception.Message}");
         return 2;
     }
 
-    Console.WriteLine($"Recording: {Path.GetFullPath(path)}");
-    Console.WriteLine(gpuName is null
+    var shaders = recording.Shaders
+        .Select(shader => shader.Hash)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    var computePipelines = recording.Pipelines.Count(pipeline =>
+        pipeline.BackendMetadata is { } metadata &&
+        metadata.TryGetValue("pipeline_kind", out var kind) &&
+        kind == "compute");
+
+    var graphics = recording.Pipelines.Where(pipeline =>
+        pipeline.BackendMetadata is { } metadata &&
+        metadata.TryGetValue("pipeline_kind", out var kind) &&
+        kind == "graphics").ToArray();
+
+    var dynamicRendering = graphics.Count(pipeline =>
+        pipeline.BackendMetadata is { } metadata &&
+        metadata.TryGetValue("dynamic_rendering", out var value) &&
+        value == "true");
+
+    var incompatibleGraphics = graphics.Count(pipeline =>
+        pipeline.BackendMetadata is { } metadata &&
+        metadata.TryGetValue("replay_compatible", out var value) &&
+        value == "false");
+
+    Console.WriteLine($"Recording: {recording.RecordingPath}");
+    Console.WriteLine(recording.Device is null
         ? "GPU: identity was not captured"
-        : $"GPU: {gpuName} (vendor=0x{vendorId:x4}, device=0x{deviceId:x4}, driver={driverVersion}, cache UUID={cacheUuid ?? "unknown"})");
-    Console.WriteLine($"Unique captured SPIR-V modules: {shaderHashes.Count}");
+        : $"GPU: {recording.Device.Name} (vendor=0x{recording.Device.VendorId:x4}, device=0x{recording.Device.DeviceId:x4}, driver={recording.Device.DriverVersion}, cache UUID={recording.Device.PipelineCacheUuid})");
+    Console.WriteLine($"Unique captured SPIR-V modules: {shaders}");
     Console.WriteLine($"Compute pipelines: {computePipelines}");
-    Console.WriteLine($"Graphics pipelines: {graphicsPipelines} (dynamic rendering: {dynamicRenderingPipelines}, marked incompatible: {incompatibleGraphicsPipelines})");
-    Console.WriteLine($"Driver cache replays: {replayedCaches}; skipped: {skippedCaches}");
+    Console.WriteLine($"Graphics pipelines: {graphics.Length} (dynamic rendering: {dynamicRendering}, marked incompatible: {incompatibleGraphics})");
+    Console.WriteLine($"Driver cache replays: {recording.CacheReplays}; skipped: {recording.CacheReplaySkips}");
+    Console.WriteLine($"Pipelines with missing SPIR-V bytes: {recording.Pipelines.Count(pipeline => pipeline.BackendMetadata is { } metadata && metadata.TryGetValue("missing_shader_hashes", out var missing) && !string.IsNullOrEmpty(missing))}");
     Console.WriteLine("Events:");
-    foreach (var item in eventCounts)
+    foreach (var item in recording.EventCounts)
         Console.WriteLine($"  {item.Key}: {item.Value}");
 
     return 0;
-
-    static long ReadCount(JsonElement root) =>
-        root.TryGetProperty("count", out var count) && count.TryGetInt64(out var value)
-            ? value
-            : 1;
 }
