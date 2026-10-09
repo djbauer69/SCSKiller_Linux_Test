@@ -71,7 +71,8 @@ printf '[4/4] Adding launcher and documentation...\n'
 cat > "$STAGE/bin/scskiller-linux" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(realpath -- "${BASH_SOURCE[0]}")"
+BIN_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 PREFIX="$(cd -- "$BIN_DIR/.." && pwd)"
 export SCSKILLER_HOME="$PREFIX"
 export SCSKILLER_VK_LAYER_DIR="$PREFIX/share/vulkan/explicit_layer.d"
