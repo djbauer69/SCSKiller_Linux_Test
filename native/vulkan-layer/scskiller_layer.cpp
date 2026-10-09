@@ -2223,7 +2223,13 @@ vkGetDeviceProcAddr(VkDevice device, const char* name)
     if (std::strcmp(name, "vkCreateComputePipelines") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines);
     if (std::strcmp(name, "vkCreateRayTracingPipelinesKHR") == 0)
+    {
+        std::lock_guard lock(g_mutex);
+        const auto it = g_devices.find(device);
+        if (it == g_devices.end() || !it->second.CreateRayTracingPipelinesKHR)
+            return nullptr;
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRayTracingPipelinesKHR);
+    }
     if (std::strcmp(name, "vkCreateShaderModule") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule);
     if (std::strcmp(name, "vkDestroyShaderModule") == 0)
