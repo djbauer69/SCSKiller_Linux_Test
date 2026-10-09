@@ -80,6 +80,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_DEBUG_PLUGINS: "1"
           QML_IMPORT_TRACE: "1"
+          SCSKILLER_KDE_DEBUG: "1"
         run: |
           install_home="${GITHUB_WORKSPACE}/build/package-install-home"
           HOME="$install_home" \
@@ -94,10 +95,14 @@ jobs:
           grep -F "Exec=\"$install_root/bin/scskiller-kde\"" "$install_home/.local/share/applications/scskiller-kde.desktop"
           "$install_home/.local/bin/scskiller-linux" help
           set +e
-          timeout 8s "$install_root/bin/scskiller-kde" > build/kde-installed-smoke.log 2>&1
+          PATH="$install_home/.local/bin:$PATH" \
+            env -u SCSKILLER_HOME -u SCSKILLER_CLI \
+            timeout 8s "$install_root/bin/scskiller-kde" > build/kde-installed-smoke.log 2>&1
           status=$?
           set -e
           cat build/kde-installed-smoke.log
+          grep -F "SCSKiller CLI launcher: $install_root/bin/scskiller-linux" build/kde-installed-smoke.log
+          grep -F "Default Vulkan layer directory: $install_root/share/vulkan/explicit_layer.d" build/kde-installed-smoke.log
           if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
             echo "Installed KDE UI exited unexpectedly with status $status" >&2
             exit 1
