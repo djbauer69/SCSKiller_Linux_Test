@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SCSKiller
+GenericName=Vulkan Pipeline Preparation
+Comment=Capture, inspect and prepare Vulkan pipelines for Linux games
+Exec=scskiller-kde
+Icon=applications-games
+Terminal=false
+Categories=Utility;System;
+StartupNotify=true
