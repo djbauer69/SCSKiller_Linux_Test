@@ -210,6 +210,21 @@ jobs:
           timeout 60s build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/cache-replay-capture.jsonl
           grep -q '"event":"pipeline_cache_replay"' build/vulkan-smoke/cache-replay-capture.jsonl
+      - name: Launch native Vulkan process through managed cache launcher
+        env:
+          SCSKILLER_VK_RECORD: "1"
+          SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/managed-cache-launch.jsonl
+          NODEVICE_SELECT: "1"
+        run: |
+          rm -f build/vulkan-smoke/managed-cache-launch.jsonl
+          timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            run-vulkan build/vulkan-probe/scskiller-vulkan-probe \
+            ${{ github.workspace }} \
+            ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d \
+            build/vulkan-smoke/warmed.cache.bin \
+            build/vulkan-smoke/compute.spv
+          test -s build/vulkan-smoke/managed-cache-launch.jsonl
+          grep -q '"event":"pipeline_cache_replay"' build/vulkan-smoke/managed-cache-launch.jsonl
       - name: Reject incompatible driver cache without breaking the app
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
