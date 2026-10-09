@@ -66,6 +66,11 @@ QString BackendController::defaultCachePath() const
     return QDir::home().filePath(QStringLiteral("scskiller-warmed.cache.bin"));
 }
 
+QString BackendController::defaultWorkingDirectory() const
+{
+    return QDir::homePath();
+}
+
 QString BackendController::findLauncher() const
 {
     const QString configured = qEnvironmentVariable("SCSKILLER_CLI");
