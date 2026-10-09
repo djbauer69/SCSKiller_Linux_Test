@@ -778,13 +778,6 @@ bool ParseGraphicsPipelineState(
         {
             record.dynamicRendering = true;
 
-            bool renderingPnextPresent = false;
-            if (FindBool(dynamicRendering, "pnext_present", renderingPnextPresent) &&
-                renderingPnextPresent)
-            {
-                record.replayCompatible = false;
-            }
-
             if (!FindUnsigned(dynamicRendering, "view_mask", value))
                 return false;
             record.viewMask = static_cast<uint32_t>(value);
