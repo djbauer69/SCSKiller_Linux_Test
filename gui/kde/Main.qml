@@ -12,7 +12,7 @@ Kirigami.ApplicationWindow {
     visible: true
     title: qsTr("SCSKiller — Vulkan Pipeline Preparation")
 
-    function extraArguments() {
+    function extraArgumentList() {
         return extraArgumentsField.text.split(/\r?\n/).filter(function (value) {
             return value.trim().length > 0
         })
@@ -24,7 +24,7 @@ Kirigami.ApplicationWindow {
             workDirectory.text,
             layerDirectory.text,
             capturePath.text
-        ].concat(extraArguments()))
+        ].concat(extraArgumentList()))
     }
 
     function captureProton() {
@@ -35,7 +35,7 @@ Kirigami.ApplicationWindow {
             gameExecutable.text,
             layerDirectory.text,
             capturePath.text
-        ].concat(extraArguments()))
+        ].concat(extraArgumentList()))
     }
 
     function inspectCapture() {
@@ -43,10 +43,10 @@ Kirigami.ApplicationWindow {
     }
 
     function warmCapture() {
-        var arguments = [capturePath.text, "--output-cache", cachePath.text]
+        var warmArgs = [capturePath.text, "--output-cache", cachePath.text]
         if (requireComplete.checked)
-            arguments.push("--require-complete")
-        backend.runCommand("warm-vulkan", arguments)
+            warmArgs.push("--require-complete")
+        backend.runCommand("warm-vulkan", warmArgs)
     }
 
     function launchNative() {
@@ -55,7 +55,7 @@ Kirigami.ApplicationWindow {
             workDirectory.text,
             layerDirectory.text,
             cachePath.text
-        ].concat(extraArguments()))
+        ].concat(extraArgumentList()))
     }
 
     function launchProton() {
@@ -66,7 +66,7 @@ Kirigami.ApplicationWindow {
             gameExecutable.text,
             layerDirectory.text,
             cachePath.text
-        ].concat(extraArguments()))
+        ].concat(extraArgumentList()))
     }
 
     pageStack.initialPage: Kirigami.ScrollablePage {
@@ -136,6 +136,7 @@ Kirigami.ApplicationWindow {
                     id: workDirectory
                     Kirigami.FormData.label: qsTr("Working directory:")
                     Layout.fillWidth: true
+                    text: backend.defaultWorkingDirectory
                     placeholderText: qsTr("/path/to/game/directory")
                 }
 
