@@ -272,6 +272,39 @@ jobs:
             inspect-vulkan build/vulkan-smoke/merged-app-cache.jsonl > build/vulkan-smoke/merged-app-cache-inspect.log
           grep -q 'Driver cache injections/merges: 1; skipped: 0' build/vulkan-smoke/merged-app-cache-inspect.log
 
+      - name: Skip compute pipelines with unsupported pipeline-level pNext state
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/capture.jsonl")
+          target = Path("build/vulkan-smoke/unsupported-pipeline-pnext.jsonl")
+          changed = False
+          output = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              if not changed and record.get("event") == "compute_pipeline_state":
+                  pipeline = record["pipelines"][0]
+                  pipeline["pipeline_pnext_present"] = True
+                  pipeline["pipeline_pnext_compatible"] = False
+                  pipeline["replay_compatible"] = False
+                  changed = True
+              output.append(json.dumps(record, separators=(",", ":")))
+          if not changed:
+              raise SystemExit("No compute_pipeline_state event found")
+          target.write_text("\n".join(output) + "\n")
+          PY
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/unsupported-pipeline-pnext.jsonl - \
+            build/vulkan-smoke/unsupported-pipeline-pnext.cache.bin \
+            > build/vulkan-smoke/unsupported-pipeline-pnext-replay.log 2>&1
+          grep -q 'Compute replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/unsupported-pipeline-pnext-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/unsupported-pipeline-pnext.jsonl > build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
+          grep -q 'Pipeline plan: 1 total; 0 replayable; 1 unsupported' build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
+          grep -q 'unsupported-pipeline-pnext: 1' build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
+          grep -Eq 'compute id=[0-9a-f]{16} status=unsupported.*reasons=.*unsupported-pipeline-pnext' build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
+
       - name: Skip pipelines when a recorded descriptor layout is incompatible
         run: |
           python3 - <<'PY'
