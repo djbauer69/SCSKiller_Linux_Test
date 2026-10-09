@@ -31,6 +31,24 @@ BUILD_ROOT_REAL="$(realpath -m -- "$BUILD_ROOT")"
 HOME_REAL="$(realpath -m -- "$HOME")"
 
 UNSAFE_STAGE=0
+if [[ -L "$STAGE" ]]; then
+    UNSAFE_STAGE=1
+fi
+
+if [[ -e "$STAGE_REAL" ]]; then
+    if [[ ! -d "$STAGE_REAL" ]]; then
+        UNSAFE_STAGE=1
+    elif [[ -e "$STAGE_REAL/.scskiller-package-stage" ]]; then
+        : # Marked by an interrupted run of this packaging script.
+    elif [[ -e "$STAGE_REAL/VERSION" &&
+            -x "$STAGE_REAL/bin/scskiller-linux" &&
+            -s "$STAGE_REAL/share/vulkan/explicit_layer.d/layer.json" &&
+            -s "$STAGE_REAL/share/doc/scskiller-linux/LICENSE" ]]; then
+        : # A recognizable package from an earlier successful build.
+    elif [[ -n "$(find "$STAGE_REAL" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        UNSAFE_STAGE=1
+    fi
+fi
 if [[ "$STAGE_REAL" == "/" || "$STAGE_REAL" == "$ROOT_REAL" || "$STAGE_REAL" == "$HOME_REAL" ]]; then
     UNSAFE_STAGE=1
 fi
@@ -55,10 +73,12 @@ if [[ "$UNSAFE_STAGE" == "1" ]]; then
     exit 2
 fi
 
+STAGE="$STAGE_REAL"
 rm -rf -- "$STAGE"
 mkdir -p -- "$STAGE" "$BUILD_ROOT" \
     "$STAGE/bin" "$STAGE/libexec/cli" \
     "$STAGE/share/doc/scskiller-linux"
+touch "$STAGE/.scskiller-package-stage"
 
 printf '[1/4] Building and installing the Vulkan layer...\n'
 cmake -S "$ROOT/native/vulkan-layer" \
@@ -133,6 +153,7 @@ else
 fi
 printf 'version=%s\nconfiguration=%s\n' "$VERSION" "$CONFIG" \
     > "$STAGE/VERSION"
+rm -f -- "$STAGE/.scskiller-package-stage"
 
 printf '\nPackage staged at:\n  %s\n' "$STAGE"
 printf 'Launcher:\n  %s/bin/scskiller-linux\n' "$STAGE"
