@@ -851,8 +851,8 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                  pipelineNode = pipelineNode->pNext)
             {
                 // Creation feedback is output-only metadata and can be omitted
-                // on replay. Dynamic-rendering state is captured below, but any
-                // nested pNext state still needs its own serializer.
+                // on replay. Inspect the whole pNext chain node-by-node: a node's
+                // pNext points to the next node in the same chain, not a nested chain.
                 if (pipelineNode->sType == VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO)
                     continue;
 
@@ -862,13 +862,6 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
                     break;
                 }
 
-                const auto* renderingNode =
-                    reinterpret_cast<const VkPipelineRenderingCreateInfo*>(pipelineNode);
-                if (renderingNode->pNext != nullptr)
-                {
-                    pipelinePnextSupported = false;
-                    break;
-                }
             }
             const bool replayCompatible =
                 pipelinePnextSupported && info.basePipelineIndex < 0 &&
