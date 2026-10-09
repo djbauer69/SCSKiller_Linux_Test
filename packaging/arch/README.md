@@ -8,7 +8,7 @@ Install build dependencies first:
 sudo pacman -S --needed \
   base-devel git cmake ninja dotnet-sdk-10.0 vulkan-headers \
   vulkan-icd-loader qt6-base qt6-declarative qt6-shadertools kirigami \
-  icu openssl zlib libunwind
+  icu openssl krb5 zlib libunwind
 ```
 
 Then build and install from this directory:
