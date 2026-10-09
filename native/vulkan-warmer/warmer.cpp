@@ -770,6 +770,17 @@ bool ParseGraphicsPipelineState(
         bool compatible = true;
         if (FindBool(entry, "replay_compatible", compatible))
             record.replayCompatible = compatible;
+        bool pipelinePnextPresent = false;
+        if (FindBool(entry, "pipeline_pnext_present", pipelinePnextPresent) &&
+            pipelinePnextPresent)
+        {
+            bool pipelinePnextCompatible = false;
+            if (!FindBool(entry, "pipeline_pnext_compatible", pipelinePnextCompatible) ||
+                !pipelinePnextCompatible)
+            {
+                record.replayCompatible = false;
+            }
+        }
         if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
             record.replayCompatible = false;
 
@@ -1554,6 +1565,17 @@ bool ParseRecording(const std::string& path, Recording& recording, std::string& 
                 bool stagePnextPresent = false;
                 if (FindBool(entry, "stage_pnext_present", stagePnextPresent) && stagePnextPresent)
                     pipeline.replayCompatible = false;
+                bool pipelinePnextPresent = false;
+                if (FindBool(entry, "pipeline_pnext_present", pipelinePnextPresent) &&
+                    pipelinePnextPresent)
+                {
+                    bool pipelinePnextCompatible = false;
+                    if (!FindBool(entry, "pipeline_pnext_compatible", pipelinePnextCompatible) ||
+                        !pipelinePnextCompatible)
+                    {
+                        pipeline.replayCompatible = false;
+                    }
+                }
                 FindBool(entry, "base_pipeline_handle_present", pipeline.basePipelineHandlePresent);
                 int64_t basePipelineIndex = -1;
                 if (FindSigned(entry, "base_pipeline_index", basePipelineIndex))
