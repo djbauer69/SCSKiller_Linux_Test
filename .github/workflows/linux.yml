@@ -498,6 +498,11 @@ jobs:
           assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap" "$GITHUB_WORKSPACE/build/package-guard-overlap/build"
           assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap/output" "$GITHUB_WORKSPACE/build/package-guard-overlap"
           assert_stage_rejected "$GITHUB_WORKSPACE/build/package-safe-stage" "$GITHUB_WORKSPACE"
+          unrelated_stage="$GITHUB_WORKSPACE/build/package-unrelated-stage"
+          mkdir -p "$unrelated_stage"
+          printf 'do not erase me\\n' > "$unrelated_stage/KEEP-ME"
+          assert_stage_rejected "$unrelated_stage" "$GITHUB_WORKSPACE/build/package-guard"
+          grep -q 'do not erase me' "$unrelated_stage/KEEP-ME"
           bash scripts/package-linux.sh
           test -x build/package-smoke/bin/scskiller-linux
           test -x build/package-smoke/libexec/cli/scskiller-linux
