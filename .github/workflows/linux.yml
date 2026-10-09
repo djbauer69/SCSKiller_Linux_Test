@@ -143,6 +143,32 @@ jobs:
             - \
             build/vulkan-smoke/warmed.cache.bin
           test -s build/vulkan-smoke/warmed.cache.bin
+      - name: Skip pipelines when a recorded descriptor layout is incompatible
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/capture.jsonl")
+          target = Path("build/vulkan-smoke/incompatible-layout-capture.jsonl")
+          changed = False
+          output = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              if not changed and record.get("event") == "descriptor_set_layout_create":
+                  record["replay_compatible"] = False
+                  changed = True
+              output.append(json.dumps(record, separators=(",", ":")))
+          if not changed:
+              raise SystemExit("No descriptor_set_layout_create event found")
+          target.write_text("\n".join(output) + "\n")
+          PY
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/incompatible-layout-capture.jsonl \
+            - \
+            build/vulkan-smoke/incompatible-layout-warmed.cache.bin \
+            > build/vulkan-smoke/incompatible-layout-replay.log 2>&1
+          cat build/vulkan-smoke/incompatible-layout-replay.log
+          grep -q 'Compute replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/incompatible-layout-replay.log
       - name: Replay driver cache through Vulkan layer
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
