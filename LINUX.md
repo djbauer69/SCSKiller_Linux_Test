@@ -84,3 +84,5 @@ Before replaying a game capture, summarize the recorded GPU and the pipeline cov
     scskiller-linux inspect-vulkan capture.jsonl
 
 The report lists captured SPIR-V modules, compute and graphics pipelines, dynamic-rendering pipelines, state marked incompatible, and cache replay events. It is a diagnostic count, not a guarantee that every pipeline from a full game is reconstructible; the warmer's compiled/skipped/failed totals remain the final check.
+
+By default, `warm-vulkan` reports skipped pipelines but exits successfully if Vulkan itself completed without a pipeline-creation error. Add `--require-complete` when you need a strict pass/fail result: the command returns a nonzero status if any compute/graphics pipeline was skipped or failed, the output summary is missing, or ray-tracing pipelines remain unsupported.
