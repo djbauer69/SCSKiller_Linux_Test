@@ -128,6 +128,14 @@ jobs:
           cat build/vulkan-smoke/dynamic-replay.log
           test -s build/vulkan-smoke/dynamic-graphics-warmed.cache.bin
           grep -q 'Graphics replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/dynamic-replay.log
+      - name: Inspect captured Vulkan recording via the managed CLI
+        run: |
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/capture.jsonl > build/vulkan-smoke/inspect.log
+          cat build/vulkan-smoke/inspect.log
+          grep -q 'Unique captured SPIR-V modules: 1' build/vulkan-smoke/inspect.log
+          grep -q 'Compute pipelines: 1' build/vulkan-smoke/inspect.log
+
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
