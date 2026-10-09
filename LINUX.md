@@ -33,9 +33,11 @@ The existing Windows D3D12 proxy remains unchanged.
 
 ## Current replay milestone
 
-The native Vulkan warmer can reconstruct recorded compute pipelines when the capture contains reconstructible descriptor-set layouts and pipeline layouts. CI exercises this path with a real GLSL compute shader, Vulkan pipeline creation, JSONL capture, and a second Vulkan process that rebuilds the compute pipeline and writes a driver-owned pipeline-cache blob.
+The standalone Vulkan warmer reconstructs and submits captured compute pipelines, classic render-pass graphics pipelines, and Vulkan 1.3 dynamic-rendering graphics pipelines to a real Vulkan driver when the recording includes the required state. CI asserts that both classic and dynamic graphics fixtures actually compile with zero skips; it also exercises driver-cache export and injection, native recording through the managed CLI, and a staged Linux package.
 
-Graphics pipeline replay remains deliberately gated on fuller fixed-function and rendering-state capture.
+The JSONL recording stores SPIR-V shader bytes, pipeline/layout/rendering state, pNext replay-compatibility markers, and physical-device identity. It refuses to guess unknown extension state. Pipelines with immutable samplers, unsupported pNext chains, or derivative relationships that cannot be reconstructed are skipped. Driver-owned pipeline cache blobs remain opaque and should only be reused with a matching pipeline-cache UUID.
+
+This is an experimental foundation, not yet proof that an arbitrary real game's entire pipeline set can be recreated. The next integration gates are the package smoke test, then validation on the target CachyOS machine and with a real Proton game on each supported translation path.
 
 
 ## Capturing a Proton game
