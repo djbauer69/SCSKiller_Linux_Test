@@ -39,6 +39,33 @@ BackendController::BackendController(QObject* parent)
     });
 }
 
+QString BackendController::defaultLayerDirectory() const
+{
+    const QString home = qEnvironmentVariable("SCSKILLER_HOME");
+    if (!home.isEmpty())
+        return QDir(home).filePath(QStringLiteral("share/vulkan/explicit_layer.d"));
+
+    if (!m_launcherPath.isEmpty()) {
+        const QString candidate = QDir(QFileInfo(m_launcherPath).absolutePath())
+                                      .filePath(QStringLiteral("../share/vulkan/explicit_layer.d"));
+        const QString cleaned = QDir::cleanPath(candidate);
+        if (QFileInfo(cleaned).isDir())
+            return cleaned;
+    }
+
+    return {};
+}
+
+QString BackendController::defaultCapturePath() const
+{
+    return QDir::home().filePath(QStringLiteral("scskiller-capture.jsonl"));
+}
+
+QString BackendController::defaultCachePath() const
+{
+    return QDir::home().filePath(QStringLiteral("scskiller-warmed.cache.bin"));
+}
+
 QString BackendController::findLauncher() const
 {
     const QString configured = qEnvironmentVariable("SCSKILLER_CLI");
