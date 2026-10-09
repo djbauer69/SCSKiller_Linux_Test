@@ -1,0 +1,28 @@
+name: KDE UI
+
+on:
+  push:
+    branches: [ linux-vulkan-proton ]
+    paths:
+      - "gui/kde/**"
+      - ".github/workflows/kde-ui.yml"
+  pull_request:
+    paths:
+      - "gui/kde/**"
+      - ".github/workflows/kde-ui.yml"
+
+jobs:
+  build-kirigami:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6 and KDE dependencies
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake ninja qt6-base qt6-declarative qt6-shadertools kirigami
+      - name: Configure Kirigami app
+        run: cmake -S gui/kde -B build/kde-ui -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build Kirigami app
+        run: cmake --build build/kde-ui --parallel
