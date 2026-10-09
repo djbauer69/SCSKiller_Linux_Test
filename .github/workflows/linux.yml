@@ -309,6 +309,7 @@ jobs:
           fi
           bash scripts/package-linux.sh
           test -x build/package-smoke/bin/scskiller-linux
+          test -x build/package-smoke/libexec/cli/scskiller-linux
           test -s build/package-smoke/lib/VK_LAYER_SCSKILLER.so
           test -s build/package-smoke/share/vulkan/explicit_layer.d/layer.json
           test -x build/package-smoke/bin/scskiller-vulkan-warmer
@@ -316,3 +317,10 @@ jobs:
           timeout 60s build/package-smoke/bin/scskiller-linux warm-vulkan build/vulkan-smoke/capture.jsonl \
             --output-cache build/vulkan-smoke/package-warmed.cache.bin
           test -s build/vulkan-smoke/package-warmed.cache.bin
+      - name: Upload experimental Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: scskiller-linux-${{ github.sha }}
+          path: build/package-smoke/
+          if-no-files-found: error
+          retention-days: 14
