@@ -225,6 +225,34 @@ jobs:
             build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/managed-cache-launch.jsonl
           grep -q '"event":"pipeline_cache_replay"' build/vulkan-smoke/managed-cache-launch.jsonl
+      - name: Launch Proton game through managed cache launcher
+        env:
+          SCSKILLER_VK_RECORD: "1"
+          SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/managed-proton-cache-launch.jsonl
+          NODEVICE_SELECT: "1"
+        run: |
+          cat > build/vulkan-smoke/proton-mock <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          [[ "${1:-}" == "run" ]] || { echo "expected Proton run subcommand" >&2; exit 2; }
+          shift
+          test -n "${STEAM_COMPAT_DATA_PATH:-}"
+          test -n "${SCSKILLER_VK_REPLAY_CACHE:-}"
+          test "${VK_INSTANCE_LAYERS:-}" = "VK_LAYER_SCSKILLER"
+          exec "$@"
+          EOF
+          chmod +x build/vulkan-smoke/proton-mock
+          rm -f build/vulkan-smoke/managed-proton-cache-launch.jsonl
+          timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            run-proton-vulkan build/vulkan-smoke/proton-mock \
+            build/vulkan-smoke/mock-compatdata \
+            ${{ github.workspace }} \
+            build/vulkan-probe/scskiller-vulkan-probe \
+            ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d \
+            build/vulkan-smoke/warmed.cache.bin \
+            build/vulkan-smoke/compute.spv
+          test -s build/vulkan-smoke/managed-proton-cache-launch.jsonl
+          grep -q '"event":"pipeline_cache_replay"' build/vulkan-smoke/managed-proton-cache-launch.jsonl
       - name: Reject incompatible driver cache without breaking the app
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
