@@ -41,6 +41,7 @@ struct ShaderKeyHash
 
 struct DeviceDispatch
 {
+    VkPhysicalDevice PhysicalDevice = VK_NULL_HANDLE;
     PFN_vkGetDeviceProcAddr GetDeviceProcAddr = nullptr;
     PFN_vkDestroyDevice DestroyDevice = nullptr;
     PFN_vkCreateDescriptorSetLayout CreateDescriptorSetLayout = nullptr;
@@ -1020,15 +1021,10 @@ void RecordGraphicsStages(VkDevice device, uint64_t sequence,
 }
 
 
-void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
+bool QueryPhysicalDeviceProperties(
+    VkPhysicalDevice physicalDevice,
+    VkPhysicalDeviceProperties& properties)
 {
-    if (!RecordingEnabled())
-        return;
-
-    const char* path = RecordingPath();
-    if (!path || physicalDevice == VK_NULL_HANDLE)
-        return;
-
     VkInstance instance = VK_NULL_HANDLE;
     {
         std::lock_guard lock(g_mutex);
@@ -1038,14 +1034,14 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
     }
 
     if (instance == VK_NULL_HANDLE)
-        return;
+        return false;
 
     InstanceDispatch instanceDispatch{};
     {
         std::lock_guard lock(g_mutex);
         auto it = g_instances.find(instance);
         if (it == g_instances.end())
-            return;
+            return false;
         instanceDispatch = it->second;
     }
 
@@ -1062,10 +1058,24 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
     }
 
     if (!getProperties)
+        return false;
+
+    getProperties(physicalDevice, &properties);
+    return true;
+}
+
+void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
+{
+    if (!RecordingEnabled())
+        return;
+
+    const char* path = RecordingPath();
+    if (!path || physicalDevice == VK_NULL_HANDLE)
         return;
 
     VkPhysicalDeviceProperties properties{};
-    getProperties(physicalDevice, &properties);
+    if (!QueryPhysicalDeviceProperties(physicalDevice, properties))
+        return;
 
     char uuid[VK_UUID_SIZE * 2 + 1]{};
     for (size_t i = 0; i < VK_UUID_SIZE; ++i)
@@ -1085,6 +1095,7 @@ void RecordPhysicalDevice(VkPhysicalDevice physicalDevice)
         std::fclose(file);
     }
 }
+
 
 
 void RecordCount(const char* event, uint64_t sequence, uint32_t count)
@@ -1416,6 +1427,7 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
     RecordPhysicalDevice(physicalDevice);
 
     DeviceDispatch dispatch{};
+    dispatch.PhysicalDevice = physicalDevice;
     dispatch.GetDeviceProcAddr = next->pfnNextGetDeviceProcAddr;
 
     if (!dispatch.GetDeviceProcAddr)
@@ -1991,6 +2003,39 @@ vkCreatePipelineCache(VkDevice device,
 
     if (read != data.size())
         return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+
+    if (createInfo->pNext != nullptr)
+    {
+        Debug("pipeline cache replay skipped: VkPipelineCacheCreateInfo has a pNext chain");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
+
+    VkPhysicalDeviceProperties properties{};
+    if (!QueryPhysicalDeviceProperties(dispatch.PhysicalDevice, properties) ||
+        data.size() < sizeof(VkPipelineCacheHeaderVersionOne))
+    {
+        Debug("pipeline cache replay skipped: cache header or physical-device identity unavailable");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
+
+    VkPipelineCacheHeaderVersionOne header{};
+    std::memcpy(&header, data.data(), sizeof(header));
+    const bool compatibleHeader =
+        header.headerSize >= sizeof(VkPipelineCacheHeaderVersionOne) &&
+        header.headerSize <= data.size() &&
+        header.headerVersion == VK_PIPELINE_CACHE_HEADER_VERSION_ONE &&
+        header.vendorID == properties.vendorID &&
+        header.deviceID == properties.deviceID &&
+        std::memcmp(header.pipelineCacheUUID, properties.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+
+    if (!compatibleHeader)
+    {
+        Debug("pipeline cache replay skipped: driver cache header does not match this GPU");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
 
     VkPipelineCacheCreateInfo replayInfo = *createInfo;
     replayInfo.initialDataSize = data.size();
