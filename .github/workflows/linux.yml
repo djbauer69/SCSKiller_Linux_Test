@@ -173,6 +173,17 @@ jobs:
           EOF
           glslc -fshader-stage=vertex build/vulkan-smoke/vertex.vert -o build/vulkan-smoke/vertex.spv
           glslc -fshader-stage=fragment build/vulkan-smoke/fragment.frag -o build/vulkan-smoke/fragment.spv
+          cat > build/vulkan-smoke/fragment-specialization.frag <<'EOF'
+          #version 450
+          layout(constant_id = 0) const uint gate = 1u;
+          layout(location = 0) out vec4 outColor;
+          void main() {
+              outColor = gate == 7u
+                  ? vec4(0.0, 1.0, 0.0, 1.0)
+                  : vec4(1.0, 0.0, 0.0, 1.0);
+          }
+          EOF
+          glslc -fshader-stage=fragment build/vulkan-smoke/fragment-specialization.frag -o build/vulkan-smoke/fragment-specialization.spv
       - name: Run Vulkan graphics capture smoke test
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
@@ -187,6 +198,34 @@ jobs:
           grep -q '"event":"shader_module_code"' build/vulkan-smoke/graphics-capture.jsonl
           grep -q '"event":"render_pass_create"' build/vulkan-smoke/graphics-capture.jsonl
           grep -q '"event":"graphics_pipeline_state"' build/vulkan-smoke/graphics-capture.jsonl
+      - name: Capture and replay a graphics pipeline with specialization constants
+        env:
+          VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/vulkan-install/lib
+          VK_INSTANCE_LAYERS: VK_LAYER_SCSKILLER
+          NODEVICE_SELECT: "1"
+          SCSKILLER_VK_RECORD: "1"
+          SCSKILLER_VK_RECORD_FILE: ${{ github.workspace }}/build/vulkan-smoke/graphics-specialization-capture.jsonl
+        run: |
+          timeout 60s build/vulkan-probe/scskiller-vulkan-probe --graphics-specialization \
+            build/vulkan-smoke/vertex.spv build/vulkan-smoke/fragment-specialization.spv
+          test -s build/vulkan-smoke/graphics-specialization-capture.jsonl
+          grep -q '"constant_id":0,"offset":0,"size":4' build/vulkan-smoke/graphics-specialization-capture.jsonl
+          grep -q '"data_base64":"BwAAAA=="' build/vulkan-smoke/graphics-specialization-capture.jsonl
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/graphics-specialization-capture.jsonl > build/vulkan-smoke/graphics-specialization-plan.log
+          grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/graphics-specialization-plan.log
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/graphics-specialization-capture.jsonl - \
+            build/vulkan-smoke/graphics-specialization-warmed.cache.bin \
+            > build/vulkan-smoke/graphics-specialization-replay.log 2>&1
+          cat build/vulkan-smoke/graphics-specialization-replay.log
+          test -s build/vulkan-smoke/graphics-specialization-warmed.cache.bin
+          grep -q 'Graphics replay: requested 1, compiled 1, skipped 0, failed 0' build/vulkan-smoke/graphics-specialization-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/graphics-specialization-capture.jsonl > build/vulkan-smoke/graphics-specialization-inspect.log
+          grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/graphics-specialization-inspect.log
+
       - name: Run Vulkan dynamic-rendering capture smoke test
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
