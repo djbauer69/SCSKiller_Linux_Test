@@ -73,25 +73,34 @@ QString BackendController::defaultWorkingDirectory() const
 
 QString BackendController::findLauncher() const
 {
+    const auto resolveExecutable = [](const QString& path) {
+        const QFileInfo info(path);
+        const QString canonical = info.canonicalFilePath();
+        return canonical.isEmpty() ? info.absoluteFilePath() : canonical;
+    };
+
     const QString configured = qEnvironmentVariable("SCSKILLER_CLI");
     if (!configured.isEmpty() && QFileInfo(configured).isExecutable())
-        return QFileInfo(configured).absoluteFilePath();
+        return resolveExecutable(configured);
 
     const QString home = qEnvironmentVariable("SCSKILLER_HOME");
     if (!home.isEmpty()) {
         const QString candidate = QDir(home).filePath(QStringLiteral("bin/scskiller-linux"));
         if (QFileInfo(candidate).isExecutable())
-            return QFileInfo(candidate).absoluteFilePath();
+            return resolveExecutable(candidate);
     }
 
+    // Resolve symlinks such as /usr/bin/scskiller-linux -> /opt/scskiller-linux/bin/...
+    // so the default Vulkan layer directory can be found relative to the package,
+    // not relative to /usr/bin.
     const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("scskiller-linux"));
     if (!fromPath.isEmpty())
-        return fromPath;
+        return resolveExecutable(fromPath);
 
     const QString sibling = QDir(QCoreApplication::applicationDirPath())
                                 .filePath(QStringLiteral("scskiller-linux"));
     if (QFileInfo(sibling).isExecutable())
-        return QFileInfo(sibling).absoluteFilePath();
+        return resolveExecutable(sibling);
 
     return {};
 }
