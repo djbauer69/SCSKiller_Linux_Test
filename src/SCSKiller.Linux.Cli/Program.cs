@@ -237,11 +237,13 @@ static int PlanVulkanRecording(string path)
     var replayableGraphics = CountKind(plan.ReplayablePipelines, "graphics");
     var unsupportedCompute = CountKind(plan.UnsupportedPipelines, "compute");
     var unsupportedGraphics = CountKind(plan.UnsupportedPipelines, "graphics");
+    var replayableRayTracing = CountKind(plan.ReplayablePipelines, "ray-tracing");
+    var unsupportedRayTracing = CountKind(plan.UnsupportedPipelines, "ray-tracing");
 
     Console.WriteLine($"Recording: {plan.Recording.RecordingPath}");
     Console.WriteLine($"Pipeline plan: {all.Count} total; {plan.ReplayablePipelines.Count} replayable; {plan.UnsupportedPipelines.Count} unsupported");
-    Console.WriteLine($"Replayable: compute {replayableCompute}, graphics {replayableGraphics}");
-    Console.WriteLine($"Unsupported: compute {unsupportedCompute}, graphics {unsupportedGraphics}");
+    Console.WriteLine($"Replayable: compute {replayableCompute}, graphics {replayableGraphics}, ray-tracing {replayableRayTracing}");
+    Console.WriteLine($"Unsupported: compute {unsupportedCompute}, graphics {unsupportedGraphics}, ray-tracing {unsupportedRayTracing}");
     Console.WriteLine("Pipeline details:");
 
     for (var index = 0; index < all.Count; index++)
@@ -342,6 +344,11 @@ static int InspectVulkanRecording(string path)
         metadata.TryGetValue("replay_compatible", out var value) &&
         value == "false");
 
+    var rayTracingPipelines = recording.Pipelines.Count(pipeline =>
+        pipeline.BackendMetadata is { } metadata &&
+        metadata.TryGetValue("pipeline_kind", out var kind) &&
+        kind == "ray-tracing");
+
     Console.WriteLine($"Recording: {recording.RecordingPath}");
     Console.WriteLine(recording.Device is null
         ? "GPU: identity was not captured"
@@ -349,6 +356,7 @@ static int InspectVulkanRecording(string path)
     Console.WriteLine($"Unique captured SPIR-V modules: {shaders}");
     Console.WriteLine($"Compute pipelines: {computePipelines}");
     Console.WriteLine($"Graphics pipelines: {graphics.Length} (dynamic rendering: {dynamicRendering}, marked incompatible: {incompatibleGraphics})");
+    Console.WriteLine($"Ray-tracing pipelines: {rayTracingPipelines} (not replayable yet: {rayTracingPipelines})");
     Console.WriteLine($"Driver cache injections/merges: {recording.CacheReplays}; skipped: {recording.CacheReplaySkips}");
     Console.WriteLine($"Pipelines with missing SPIR-V bytes: {recording.Pipelines.Count(pipeline => pipeline.BackendMetadata is { } metadata && metadata.TryGetValue("missing_shader_hashes", out var missing) && !string.IsNullOrEmpty(missing))}");
     Console.WriteLine("Events:");
