@@ -766,12 +766,12 @@ bool ParseGraphicsPipelineState(
         if (FindSigned(entry, "base_pipeline_index", signedValue))
             record.basePipelineIndex = static_cast<int32_t>(signedValue);
         FindBool(entry, "base_pipeline_handle_present", record.basePipelineHandlePresent);
-        if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
-            record.replayCompatible = false;
 
         bool compatible = true;
         if (FindBool(entry, "replay_compatible", compatible))
             record.replayCompatible = compatible;
+        if (record.basePipelineHandlePresent || record.basePipelineIndex >= 0)
+            record.replayCompatible = false;
 
         std::string_view dynamicRendering;
         if (ExtractObject(entry, "dynamic_rendering", dynamicRendering))
