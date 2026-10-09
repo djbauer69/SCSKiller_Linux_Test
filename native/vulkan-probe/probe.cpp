@@ -21,9 +21,12 @@ bool Check(VkResult result, const char* operation)
 
 int main(int argc, char** argv)
 {
+    const bool graphicsSpecializationMode = argc >= 2 &&
+        std::string(argv[1]) == "--graphics-specialization";
     const bool graphicsMode = argc >= 2 &&
         (std::string(argv[1]) == "--graphics" ||
-         std::string(argv[1]) == "--dynamic-graphics");
+         std::string(argv[1]) == "--dynamic-graphics" ||
+         graphicsSpecializationMode);
     const bool dynamicGraphicsMode = argc >= 2 &&
         std::string(argv[1]) == "--dynamic-graphics";
     const bool deviceGroupMode = argc >= 2 &&
@@ -40,6 +43,7 @@ int main(int argc, char** argv)
         std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
                   << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n"
                   << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n"
+                  << "       scskiller-vulkan-probe --graphics-specialization vertex.spv fragment-specialization.spv\n"
                   << "       scskiller-vulkan-probe --device-groups\n"
                   << "       scskiller-vulkan-probe --specialization compute.spv\n"
                   << "       scskiller-vulkan-probe --feedback compute.spv\n";
@@ -504,6 +508,19 @@ int main(int argc, char** argv)
             return 1;
         }
 
+        uint32_t graphicsSpecializationValue = 7;
+        VkSpecializationMapEntry graphicsSpecializationEntry{
+            0,
+            0,
+            sizeof(graphicsSpecializationValue)
+        };
+        VkSpecializationInfo graphicsSpecializationInfo{
+            1,
+            &graphicsSpecializationEntry,
+            sizeof(graphicsSpecializationValue),
+            &graphicsSpecializationValue
+        };
+
         VkPipelineShaderStageCreateInfo stages[2]{
             {
                 VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -521,7 +538,7 @@ int main(int argc, char** argv)
                 VK_SHADER_STAGE_FRAGMENT_BIT,
                 fragmentShader,
                 "main",
-                nullptr
+                graphicsSpecializationMode ? &graphicsSpecializationInfo : nullptr
             }
         };
 
@@ -663,7 +680,9 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        std::cout << "Graphics pipeline and render-pass hooks exercised successfully\\n";
+        std::cout << (graphicsSpecializationMode
+            ? "Graphics pipeline with specialization constants exercised successfully\\n"
+            : "Graphics pipeline and render-pass hooks exercised successfully\\n");
 
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         if (renderPass)
