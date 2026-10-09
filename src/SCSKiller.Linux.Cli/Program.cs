@@ -12,7 +12,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
     Console.WriteLine("  record-vulkan <executable> <workdir> <layer-dir> <capture.jsonl> [args...]  Record a native Vulkan process");
     Console.WriteLine("  record-proton <proton> <prefix> <workdir> <game-exe> <layer-dir> <capture.jsonl> [game args...]  Record Vulkan through Proton");
-    Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path]  Replay recorded Vulkan pipelines through the driver");
+    Console.WriteLine("  warm-vulkan <capture.jsonl> [--input-cache path] [--output-cache path] [--warmer path] [--require-complete]  Replay captured Vulkan pipelines");
     return;
 }
 
@@ -121,6 +121,7 @@ switch (args[0])
         string? inputCache = null;
         string? outputCache = null;
         var nativeWarmer = FindNativeWarmerExecutable();
+        var requireCompleteReplay = false;
 
         for (var i = 2; i < args.Length; i++)
         {
@@ -135,6 +136,9 @@ switch (args[0])
                 case "--warmer" when i + 1 < args.Length:
                     nativeWarmer = args[++i];
                     break;
+                case "--require-complete":
+                    requireCompleteReplay = true;
+                    break;
                 default:
                     Console.Error.WriteLine($"Unknown warm-vulkan option: {args[i]}");
                     Environment.ExitCode = 2;
@@ -143,7 +147,7 @@ switch (args[0])
         }
 
         var warmResult = await VulkanWarmer.RunAsync(
-            new VulkanWarmOptions(nativeWarmer, capture, inputCache, outputCache));
+            new VulkanWarmOptions(nativeWarmer, capture, inputCache, outputCache, requireCompleteReplay));
 
         Console.Write(warmResult.StandardOutput);
         if (!string.IsNullOrEmpty(warmResult.StandardError))
