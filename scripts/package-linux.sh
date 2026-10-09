@@ -84,6 +84,9 @@ install -m 0644 "$ROOT/README.md" "$STAGE/share/doc/scskiller-linux/README.md"
 install -m 0644 "$ROOT/LINUX.md" "$STAGE/share/doc/scskiller-linux/LINUX.md"
 install -m 0644 "$ROOT/native/vulkan-layer/recording-format.md" \
     "$STAGE/share/doc/scskiller-linux/recording-format.md"
+install -m 0644 "$ROOT/LICENSE" "$STAGE/share/doc/scskiller-linux/LICENSE"
+install -m 0644 "$ROOT/LICENSE-EXCEPTION.txt" "$STAGE/share/doc/scskiller-linux/LICENSE-EXCEPTION.txt"
+install -m 0644 "$ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/share/doc/scskiller-linux/THIRD-PARTY-NOTICES.md"
 
 if git -C "$ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
     VERSION="$(git -C "$ROOT" rev-parse --short HEAD)"
