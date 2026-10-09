@@ -109,7 +109,9 @@ struct PipelineLayoutKeyHash
 };
 
 std::unordered_map<DescriptorLayoutKey, uint64_t, DescriptorLayoutKeyHash> g_descriptorLayoutHashes;
+std::unordered_map<DescriptorLayoutKey, bool, DescriptorLayoutKeyHash> g_descriptorLayoutReplayCompatible;
 std::unordered_map<PipelineLayoutKey, uint64_t, PipelineLayoutKeyHash> g_pipelineLayoutHashes;
+std::unordered_map<PipelineLayoutKey, bool, PipelineLayoutKeyHash> g_pipelineLayoutReplayCompatible;
 
 struct RenderPassKey
 {
@@ -218,12 +220,28 @@ uint64_t HandleBits(T handle)
         return static_cast<uint64_t>(handle);
 }
 
+bool DescriptorSetLayoutReplayCompatible(const VkDescriptorSetLayoutCreateInfo* info)
+{
+    if (!info || info->pNext != nullptr)
+        return false;
+
+    for (uint32_t i = 0; i < info->bindingCount; ++i)
+    {
+        if (info->pBindings[i].pImmutableSamplers != nullptr)
+            return false;
+    }
+
+    return true;
+}
+
 uint64_t HashDescriptorSetLayoutCreateInfo(const VkDescriptorSetLayoutCreateInfo* info)
 {
     if (!info)
         return 0;
 
     uint64_t hash = HashCombine(1469598103934665603ull, info->flags);
+    hash = HashCombine(hash, info->pNext ? 1u : 0u);
+    hash = HashCombine(hash, info->bindingCount);
     for (uint32_t i = 0; i < info->bindingCount; ++i)
     {
         const auto& binding = info->pBindings[i];
@@ -249,6 +267,8 @@ uint64_t HashPipelineLayoutCreateInfo(
         return 0;
 
     uint64_t hash = HashCombine(1469598103934665603ull, info->flags);
+    hash = HashCombine(hash, info->pNext ? 1u : 0u);
+    hash = HashCombine(hash, info->setLayoutCount);
     for (uint32_t i = 0; i < info->setLayoutCount; ++i)
     {
         uint64_t layoutHash = 0;
@@ -1514,10 +1534,26 @@ vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator)
                 ++layout;
         }
 
+        for (auto layout = g_descriptorLayoutReplayCompatible.begin(); layout != g_descriptorLayoutReplayCompatible.end();)
+        {
+            if (layout->first.device == device)
+                layout = g_descriptorLayoutReplayCompatible.erase(layout);
+            else
+                ++layout;
+        }
+
         for (auto layout = g_pipelineLayoutHashes.begin(); layout != g_pipelineLayoutHashes.end();)
         {
             if (layout->first.device == device)
                 layout = g_pipelineLayoutHashes.erase(layout);
+            else
+                ++layout;
+        }
+
+        for (auto layout = g_pipelineLayoutReplayCompatible.begin(); layout != g_pipelineLayoutReplayCompatible.end();)
+        {
+            if (layout->first.device == device)
+                layout = g_pipelineLayoutReplayCompatible.erase(layout);
             else
                 ++layout;
         }
@@ -1607,12 +1643,15 @@ vkCreateDescriptorSetLayout(VkDevice device,
         return VK_ERROR_INITIALIZATION_FAILED;
 
     const uint64_t hash = HashDescriptorSetLayoutCreateInfo(createInfo);
+    const bool replayCompatible = DescriptorSetLayoutReplayCompatible(createInfo);
     const VkResult result = dispatch.CreateDescriptorSetLayout(device, createInfo, allocator, setLayout);
     if (result == VK_SUCCESS && setLayout && hash)
     {
         {
             std::lock_guard lock(g_mutex);
-            g_descriptorLayoutHashes[DescriptorLayoutKey{device, *setLayout}] = hash;
+            const DescriptorLayoutKey key{device, *setLayout};
+            g_descriptorLayoutHashes[key] = hash;
+            g_descriptorLayoutReplayCompatible[key] = replayCompatible;
         }
 
         if (RecordingEnabled())
@@ -1624,10 +1663,11 @@ vkCreateDescriptorSetLayout(VkDevice device,
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
-                        "{\"schema\":2,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"bindings\":[",
+                        "{\"schema\":3,\"event\":\"descriptor_set_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"bindings\":[",
                         static_cast<unsigned long long>(sequence),
                         static_cast<unsigned long long>(hash),
-                        createInfo ? createInfo->flags : 0);
+                        createInfo ? createInfo->flags : 0,
+                        replayCompatible ? "true" : "false");
                     if (createInfo)
                     {
                         for (uint32_t i = 0; i < createInfo->bindingCount; ++i)
@@ -1666,7 +1706,9 @@ vkDestroyDescriptorSetLayout(VkDevice device,
             return;
 
         dispatch = it->second;
-        g_descriptorLayoutHashes.erase(DescriptorLayoutKey{device, setLayout});
+        const DescriptorLayoutKey key{device, setLayout};
+        g_descriptorLayoutHashes.erase(key);
+        g_descriptorLayoutReplayCompatible.erase(key);
     }
 
     if (dispatch.DestroyDescriptorSetLayout)
@@ -1692,12 +1734,30 @@ vkCreatePipelineLayout(VkDevice device,
         return VK_ERROR_INITIALIZATION_FAILED;
 
     const uint64_t hash = HashPipelineLayoutCreateInfo(device, createInfo);
+    bool replayCompatible = createInfo != nullptr && createInfo->pNext == nullptr;
+    if (createInfo)
+    {
+        for (uint32_t i = 0; i < createInfo->setLayoutCount; ++i)
+        {
+            bool setLayoutCompatible = false;
+            {
+                std::lock_guard lock(g_mutex);
+                const auto it = g_descriptorLayoutReplayCompatible.find(
+                    DescriptorLayoutKey{device, createInfo->pSetLayouts[i]});
+                if (it != g_descriptorLayoutReplayCompatible.end())
+                    setLayoutCompatible = it->second;
+            }
+            replayCompatible = replayCompatible && setLayoutCompatible;
+        }
+    }
     const VkResult result = dispatch.CreatePipelineLayout(device, createInfo, allocator, pipelineLayout);
     if (result == VK_SUCCESS && pipelineLayout && hash)
     {
         {
             std::lock_guard lock(g_mutex);
-            g_pipelineLayoutHashes[PipelineLayoutKey{device, *pipelineLayout}] = hash;
+            const PipelineLayoutKey key{device, *pipelineLayout};
+            g_pipelineLayoutHashes[key] = hash;
+            g_pipelineLayoutReplayCompatible[key] = replayCompatible;
         }
 
         if (RecordingEnabled())
@@ -1709,10 +1769,11 @@ vkCreatePipelineLayout(VkDevice device,
                 if (std::FILE* file = std::fopen(path, "ab"))
                 {
                     std::fprintf(file,
-                        "{\"schema\":2,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"set_layouts\":[",
+                        "{\"schema\":3,\"event\":\"pipeline_layout_create\",\"sequence\":%llu,\"hash\":\"%016llx\",\"flags\":%u,\"replay_compatible\":%s,\"set_layouts\":[",
                         static_cast<unsigned long long>(sequence),
                         static_cast<unsigned long long>(hash),
-                        createInfo ? createInfo->flags : 0);
+                        createInfo ? createInfo->flags : 0,
+                        replayCompatible ? "true" : "false");
                     if (createInfo)
                     {
                         for (uint32_t i = 0; i < createInfo->setLayoutCount; ++i)
@@ -1765,7 +1826,9 @@ vkDestroyPipelineLayout(VkDevice device,
             return;
 
         dispatch = it->second;
-        g_pipelineLayoutHashes.erase(PipelineLayoutKey{device, pipelineLayout});
+        const PipelineLayoutKey key{device, pipelineLayout};
+        g_pipelineLayoutHashes.erase(key);
+        g_pipelineLayoutReplayCompatible.erase(key);
     }
 
     if (dispatch.DestroyPipelineLayout)
