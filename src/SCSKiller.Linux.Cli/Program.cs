@@ -242,6 +242,44 @@ static int PlanVulkanRecording(string path)
     Console.WriteLine($"Pipeline plan: {all.Count} total; {plan.ReplayablePipelines.Count} replayable; {plan.UnsupportedPipelines.Count} unsupported");
     Console.WriteLine($"Replayable: compute {replayableCompute}, graphics {replayableGraphics}");
     Console.WriteLine($"Unsupported: compute {unsupportedCompute}, graphics {unsupportedGraphics}");
+    Console.WriteLine("Pipeline details:");
+
+    for (var index = 0; index < all.Count; index++)
+    {
+        var pipeline = all[index];
+        var metadata = pipeline.BackendMetadata;
+        var kind = metadata is not null &&
+                   metadata.TryGetValue("pipeline_kind", out var kindValue)
+            ? kindValue
+            : "unknown";
+        var pipelineId = metadata is not null &&
+                         metadata.TryGetValue("pipeline_id", out var idValue)
+            ? idValue
+            : "unknown";
+        var sequence = metadata is not null &&
+                       metadata.TryGetValue("capture_sequence", out var sequenceValue)
+            ? sequenceValue
+            : "?";
+        var pipelineIndex = metadata is not null &&
+                            metadata.TryGetValue("capture_pipeline_index", out var indexValue)
+            ? indexValue
+            : "?";
+        var replayable = metadata is not null &&
+                         metadata.TryGetValue("replay_compatible", out var compatibleValue) &&
+                         compatibleValue == "true";
+
+        var line = $"  {index + 1}. {kind} id={pipelineId} status={(replayable ? "replayable" : "unsupported")} sequence={sequence} index={pipelineIndex}";
+        if (!replayable)
+        {
+            var reasons = metadata is not null &&
+                          metadata.TryGetValue("replay_incompatibility_reasons", out var reasonValue) &&
+                          !string.IsNullOrWhiteSpace(reasonValue)
+                ? reasonValue
+                : "unknown-reason";
+            line += $" reasons={reasons}";
+        }
+        Console.WriteLine(line);
+    }
 
     if (plan.UnsupportedReasonCounts.Count == 0)
     {
