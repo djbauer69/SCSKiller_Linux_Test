@@ -48,7 +48,7 @@ Graphics pipeline state records:
 - dynamic-rendering formats
 - pNext compatibility markers for the captured state blocks
 
-The standalone warmer replays classic render-pass graphics pipelines and Vulkan 1.3 dynamic-rendering graphics pipelines whose core state is fully reconstructible from this recording. Dynamic-rendering replay requires the selected physical device to expose and enable the core dynamicRendering feature. Pipelines with unrecorded extension pNext state and graphics pipeline derivatives using basePipelineIndex are still skipped.
+The standalone warmer replays classic render-pass graphics pipelines and Vulkan 1.3 dynamic-rendering graphics pipelines whose core state is fully reconstructible from this recording. Dynamic-rendering replay requires the selected physical device to expose and enable the core dynamicRendering feature. The recorder also marks a pipeline non-replayable if VkPipelineRenderingCreateInfo contains its own nested pNext chain; its top-level formats and view mask are not a substitute for that extension state. Pipelines with unrecorded extension pNext state and graphics pipeline derivatives using basePipelineIndex are still skipped.
 
 Compute pipeline state records the compute shader hash, specialization data, pipeline-layout hash, stage flags, and pipeline flags.
 
