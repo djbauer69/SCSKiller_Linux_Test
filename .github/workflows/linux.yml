@@ -201,7 +201,7 @@ jobs:
           grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/dynamic-graphics-plan.log
           grep -Eq 'graphics id=[0-9a-f]{16} status=replayable' build/vulkan-smoke/dynamic-graphics-plan.log
 
-      - name: Skip dynamic-rendering pipelines with nested unsupported pNext state
+      - name: Skip dynamic-rendering pipelines with unsupported pipeline-level pNext state
         run: |
           python3 - <<'PY'
           import json
@@ -213,7 +213,10 @@ jobs:
           for line in source.read_text().splitlines():
               record = json.loads(line)
               if not changed and record.get("event") == "graphics_pipeline_state":
-                  record["pipelines"][0]["dynamic_rendering"]["pnext_present"] = True
+                  pipeline = record["pipelines"][0]
+                  pipeline["pipeline_pnext_present"] = True
+                  pipeline["pipeline_pnext_compatible"] = False
+                  pipeline["replay_compatible"] = False
                   changed = True
               output.append(json.dumps(record, separators=(",", ":")))
           if not changed:
