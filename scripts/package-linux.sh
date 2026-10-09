@@ -40,6 +40,7 @@ fi
 # may be siblings underneath the checkout (as in CI), but must not overlap.
 case "$ROOT_REAL/" in
     "$STAGE_REAL/"*) UNSAFE_STAGE=1 ;;
+    "$BUILD_ROOT_REAL/"*) UNSAFE_STAGE=1 ;;
 esac
 case "$BUILD_ROOT_REAL/" in
     "$STAGE_REAL/"*) UNSAFE_STAGE=1 ;;
@@ -49,7 +50,7 @@ case "$STAGE_REAL/" in
 esac
 
 if [[ "$UNSAFE_STAGE" == "1" ]]; then
-    printf 'Refusing unsafe package staging directory: %s (build root: %s)\n' \
+    printf 'Refusing unsafe package layout (stage: %s, build root: %s)\n' \
         "$STAGE_REAL" "$BUILD_ROOT_REAL" >&2
     exit 2
 fi
