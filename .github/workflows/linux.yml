@@ -154,6 +154,15 @@ jobs:
           grep -q 'dynamic rendering: 1' build/vulkan-smoke/dynamic-graphics-inspect.log
           grep -q 'Pipelines with missing SPIR-V bytes: 0' build/vulkan-smoke/dynamic-graphics-inspect.log
 
+      - name: Plan classic and dynamic Vulkan graphics captures
+        run: |
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/graphics-capture.jsonl > build/vulkan-smoke/graphics-plan.log
+          grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/graphics-plan.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/dynamic-graphics-capture.jsonl > build/vulkan-smoke/dynamic-graphics-plan.log
+          grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/dynamic-graphics-plan.log
+
       - name: Inspect captured Vulkan recording via the managed CLI
         run: |
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
@@ -162,6 +171,11 @@ jobs:
           grep -q 'Unique captured SPIR-V modules: 1' build/vulkan-smoke/inspect.log
           grep -q 'Compute pipelines: 1' build/vulkan-smoke/inspect.log
 
+      - name: Plan captured Vulkan compute pipeline
+        run: |
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/capture.jsonl > build/vulkan-smoke/compute-plan.log
+          grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/compute-plan.log
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
@@ -215,6 +229,10 @@ jobs:
             > build/vulkan-smoke/incompatible-layout-replay.log 2>&1
           cat build/vulkan-smoke/incompatible-layout-replay.log
           grep -q 'Compute replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/incompatible-layout-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/incompatible-layout-capture.jsonl > build/vulkan-smoke/incompatible-layout-plan.log
+          grep -q 'Pipeline plan: 1 total; 0 replayable; 1 unsupported' build/vulkan-smoke/incompatible-layout-plan.log
+          grep -q 'incompatible-pipeline-layout: 1' build/vulkan-smoke/incompatible-layout-plan.log
       - name: Require complete replay through managed Vulkan warmer
         run: |
           if timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
