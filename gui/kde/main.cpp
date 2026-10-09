@@ -9,11 +9,11 @@
 
 int main(int argc, char* argv[])
 {
-    std::fprintf(stderr, "SCSKiller KDE UI: entering main\\n");
+    std::fprintf(stderr, "SCSKiller KDE UI: entering main\n");
     std::fflush(stderr);
 
     QGuiApplication app(argc, argv);
-    std::fprintf(stderr, "SCSKiller KDE UI: QGuiApplication created\\n");
+    std::fprintf(stderr, "SCSKiller KDE UI: QGuiApplication created\n");
     std::fflush(stderr);
     app.setApplicationName("SCSKiller");
     app.setOrganizationName("SCSKiller");
@@ -30,7 +30,7 @@ int main(int argc, char* argv[])
                 qWarning().noquote() << warning.toString();
         });
     engine.loadFromModule("SCSKiller.Kde", "Main");
-    std::fprintf(stderr, "SCSKiller KDE UI: QML root object count = %lld\\n",
+    std::fprintf(stderr, "SCSKiller KDE UI: QML root object count = %lld\n",
                  static_cast<long long>(engine.rootObjects().size()));
     std::fflush(stderr);
     if (engine.rootObjects().isEmpty())
@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
     }
 
     const int exitCode = app.exec();
-    std::fprintf(stderr, "SCSKiller KDE UI: event loop exited with code %d\\n", exitCode);
+    std::fprintf(stderr, "SCSKiller KDE UI: event loop exited with code %d\n", exitCode);
     std::fflush(stderr);
     return exitCode;
 }
