@@ -2258,7 +2258,21 @@ vkCreatePipelineCache(VkDevice device,
 
     VkResult result = dispatch.CreatePipelineCache(device, &replayInfo, allocator, pipelineCache);
     if (result == VK_SUCCESS)
+    {
         RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+        return result;
+    }
+
+    // A matching header is necessary, but the driver still owns the opaque
+    // payload and may reject it (for example after a driver implementation
+    // change). Invalid cache data is a cache miss, not a reason to break app
+    // startup. Retry the application's original request with an empty cache.
+    if (result == VK_ERROR_INVALID_PIPELINE_CACHE_DATA)
+    {
+        Debug("pipeline cache replay rejected by driver; retrying with empty cache");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
 
     return result;
 }
