@@ -2270,17 +2270,14 @@ vkCreatePipelineCache(VkDevice device,
             return result;
         }
 
-        // The driver owns the cache payload and may reject it even with a
-        // matching header. Treat invalid cache bytes as a miss and retry the
-        // original empty-cache request so the application can continue.
-        if (result == VK_ERROR_INVALID_PIPELINE_CACHE_DATA)
-        {
-            Debug("pipeline cache replay rejected by driver; retrying with empty cache");
-            RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
-            return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
-        }
-
-        return result;
+        // The driver owns this opaque payload. Any failure while creating
+        // the injected-cache object should fall back to the application's
+        // original empty-cache request; caching is an optimization, not a
+        // startup dependency. If the empty request also fails, return that
+        // actual driver error.
+        Debug("pipeline cache replay could not create injected cache; retrying empty cache");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
     }
 
     // Preserve a game's own non-empty initial cache. After creating it with
