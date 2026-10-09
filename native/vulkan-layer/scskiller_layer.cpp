@@ -59,6 +59,7 @@ struct DeviceDispatch
     PFN_vkCreateComputePipelines CreateComputePipelines = nullptr;
     PFN_vkCreateRayTracingPipelinesKHR CreateRayTracingPipelinesKHR = nullptr;
     PFN_vkCreatePipelineCache CreatePipelineCache = nullptr;
+    PFN_vkMergePipelineCaches MergePipelineCaches = nullptr;
     PFN_vkGetPipelineCacheData GetPipelineCacheData = nullptr;
     PFN_vkDestroyPipelineCache DestroyPipelineCache = nullptr;
 };
@@ -1619,6 +1620,8 @@ vkCreateDevice(VkPhysicalDevice physicalDevice,
         dispatch.GetDeviceProcAddr(*device, "vkCreateRayTracingPipelinesKHR"));
     dispatch.CreatePipelineCache = reinterpret_cast<PFN_vkCreatePipelineCache>(
         dispatch.GetDeviceProcAddr(*device, "vkCreatePipelineCache"));
+    dispatch.MergePipelineCaches = reinterpret_cast<PFN_vkMergePipelineCaches>(
+        dispatch.GetDeviceProcAddr(*device, "vkMergePipelineCaches"));
     dispatch.GetPipelineCacheData = reinterpret_cast<PFN_vkGetPipelineCacheData>(
         dispatch.GetDeviceProcAddr(*device, "vkGetPipelineCacheData"));
     dispatch.DestroyPipelineCache = reinterpret_cast<PFN_vkDestroyPipelineCache>(
@@ -2195,8 +2198,16 @@ vkCreatePipelineCache(VkDevice device,
         return VK_ERROR_INITIALIZATION_FAILED;
 
     const char* replayPath = std::getenv("SCSKILLER_VK_REPLAY_CACHE");
-    if (!replayPath || !replayPath[0] || !createInfo || createInfo->initialDataSize != 0)
+    if (!replayPath || !replayPath[0] || !createInfo)
         return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+
+    // The Vulkan application owns its pNext behavior. Do not alter cache
+    // creation semantics when an extension structure is present.
+    if (createInfo->pNext != nullptr)
+    {
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    }
 
     std::FILE* file = std::fopen(replayPath, "rb");
     if (!file)
@@ -2212,19 +2223,12 @@ vkCreatePipelineCache(VkDevice device,
         return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
     }
 
-    std::string data(static_cast<size_t>(length), '\0');
+    std::vector<uint8_t> data(static_cast<size_t>(length));
     const size_t read = std::fread(data.data(), 1, data.size(), file);
     std::fclose(file);
 
     if (read != data.size())
         return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
-
-    if (createInfo->pNext != nullptr)
-    {
-        Debug("pipeline cache replay skipped: VkPipelineCacheCreateInfo has a pNext chain");
-        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
-        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
-    }
 
     VkPhysicalDeviceProperties properties{};
     if (!QueryPhysicalDeviceProperties(dispatch.PhysicalDevice, properties) ||
@@ -2256,25 +2260,70 @@ vkCreatePipelineCache(VkDevice device,
     replayInfo.initialDataSize = data.size();
     replayInfo.pInitialData = data.data();
 
-    VkResult result = dispatch.CreatePipelineCache(device, &replayInfo, allocator, pipelineCache);
-    if (result == VK_SUCCESS)
+    if (createInfo->initialDataSize == 0)
     {
-        RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+        const VkResult result =
+            dispatch.CreatePipelineCache(device, &replayInfo, allocator, pipelineCache);
+        if (result == VK_SUCCESS)
+        {
+            RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+            return result;
+        }
+
+        // The driver owns the cache payload and may reject it even with a
+        // matching header. Treat invalid cache bytes as a miss and retry the
+        // original empty-cache request so the application can continue.
+        if (result == VK_ERROR_INVALID_PIPELINE_CACHE_DATA)
+        {
+            Debug("pipeline cache replay rejected by driver; retrying with empty cache");
+            RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+            return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+        }
+
         return result;
     }
 
-    // A matching header is necessary, but the driver still owns the opaque
-    // payload and may reject it (for example after a driver implementation
-    // change). Invalid cache data is a cache miss, not a reason to break app
-    // startup. Retry the application's original request with an empty cache.
-    if (result == VK_ERROR_INVALID_PIPELINE_CACHE_DATA)
+    // Preserve a game's own non-empty initial cache. After creating it with
+    // the application's original data, create a temporary cache from the
+    // warmed blob and merge into the application's cache. Failure of this
+    // optional merge must never invalidate a successfully created game cache.
+    const VkResult appCacheResult =
+        dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+    if (appCacheResult != VK_SUCCESS)
+        return appCacheResult;
+
+    if (!dispatch.MergePipelineCaches || !dispatch.DestroyPipelineCache)
     {
-        Debug("pipeline cache replay rejected by driver; retrying with empty cache");
+        Debug("pipeline cache replay skipped: cache merge entry points unavailable");
         RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
-        return dispatch.CreatePipelineCache(device, createInfo, allocator, pipelineCache);
+        return VK_SUCCESS;
     }
 
-    return result;
+    VkPipelineCache warmCache = VK_NULL_HANDLE;
+    const VkResult warmResult =
+        dispatch.CreatePipelineCache(device, &replayInfo, allocator, &warmCache);
+    if (warmResult != VK_SUCCESS)
+    {
+        Debug("pipeline cache replay skipped: driver rejected temporary warmed cache");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+        return VK_SUCCESS;
+    }
+
+    const VkResult mergeResult =
+        dispatch.MergePipelineCaches(device, *pipelineCache, 1, &warmCache);
+    dispatch.DestroyPipelineCache(device, warmCache, allocator);
+
+    if (mergeResult == VK_SUCCESS)
+    {
+        RecordCount("pipeline_cache_replay", g_sequence.fetch_add(1), 1);
+    }
+    else
+    {
+        Debug("pipeline cache replay skipped: driver could not merge the warmed cache");
+        RecordCount("pipeline_cache_replay_skipped", g_sequence.fetch_add(1), 1);
+    }
+
+    return VK_SUCCESS;
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
