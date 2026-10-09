@@ -21,11 +21,31 @@ jobs:
         run: |
           pacman -Sy --noconfirm archlinux-keyring
           pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja qt6-base qt6-declarative qt6-shadertools kirigami
+            base-devel cmake ninja dotnet-sdk-10.0 vulkan-headers vulkan-icd-loader \
+            qt6-base qt6-declarative qt6-shadertools kirigami
       - name: Configure Kirigami app
         run: cmake -S gui/kde -B build/kde-ui -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build Kirigami app
         run: cmake --build build/kde-ui --parallel
+      - name: Stage full Linux package with KDE UI
+        env:
+          STAGE: ${{ github.workspace }}/build/package-kde
+          BUILD_ROOT: ${{ github.workspace }}/build/package-kde-native
+          BUILD_KDE_UI: "1"
+        run: |
+          bash scripts/package-linux.sh
+          test -x build/package-kde/bin/scskiller-linux
+          test -x build/package-kde/bin/scskiller-vulkan-warmer
+          test -x build/package-kde/bin/scskiller-kde
+          test -s build/package-kde/share/applications/scskiller-kde.desktop
+          test -s build/package-kde/share/doc/scskiller-linux/LICENSE
+      - name: Upload KDE-enabled Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: scskiller-linux-kde-${{ github.sha }}
+          path: build/package-kde/
+          if-no-files-found: error
+          retention-days: 14
       - name: Smoke-load the QML application
         env:
           QT_QPA_PLATFORM: offscreen
