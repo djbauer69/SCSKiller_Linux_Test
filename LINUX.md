@@ -58,3 +58,18 @@ For a Proton game:
     scskiller-linux record-proton <proton> <compatdata> <workdir> <game-exe> <layer-directory> <capture.jsonl> [game arguments...]
 
 Both commands enable VK_LAYER_SCSKILLER and record at the common Vulkan boundary. This keeps native Vulkan, DXVK, and vkd3d-proton capture on the same recording format and replay path.
+
+
+## Build a local Linux package
+
+On a development machine with CMake, Ninja, .NET 10 SDK, GLSL compiler, Vulkan development headers, and the Vulkan loader installed:
+
+    bash scripts/package-linux.sh
+
+This stages a self-contained directory layout at `dist/scskiller-linux` (the managed CLI uses the installed .NET 10 runtime). The launcher is `dist/scskiller-linux/bin/scskiller-linux`; the Vulkan layer manifest, shared library, native warmer, and docs are staged alongside it. Override `STAGE` or `BUILD_ROOT` to choose other output directories.
+
+Example capture command from the source checkout:
+
+    dist/scskiller-linux/bin/scskiller-linux record-vulkan ./your-vulkan-app "$PWD" dist/scskiller-linux/share/vulkan/explicit_layer.d capture.jsonl
+
+For Proton, pass the Proton executable, compatdata path, work directory, game executable, layer manifest directory, and capture path to `record-proton`. The recorders are experimental and should first be exercised with a small test application before using them with a full game.
