@@ -37,7 +37,7 @@ The standalone Vulkan warmer reconstructs and submits captured compute pipelines
 
 The JSONL recording stores SPIR-V shader bytes, pipeline/layout/rendering state, pNext replay-compatibility markers, and physical-device identity. It refuses to guess unknown extension state. Pipelines with immutable samplers, unsupported pNext chains, or derivative relationships that cannot be reconstructed are skipped. Driver-owned pipeline cache blobs remain opaque and should only be reused with a matching pipeline-cache UUID.
 
-This is an experimental foundation, not yet proof that an arbitrary real game's entire pipeline set can be recreated. The next integration gates are the package smoke test, then validation on the target CachyOS machine and with a real Proton game on each supported translation path.
+This is an experimental foundation, not yet proof that an arbitrary real game's entire pipeline set can be recreated. CI now exercises the package launcher, strict replay reporting, compatible and incompatible cache paths, device-group enumeration, concurrent-process capture, and actual compilation of the supported core pipeline fixtures. The remaining external validation is on a real CachyOS machine/GPU and with a real Proton title on each supported translation path; that hardware/game test has not yet been performed by CI.
 
 
 ## Capturing a Proton game
@@ -62,9 +62,19 @@ For a Proton game:
 Both commands enable VK_LAYER_SCSKILLER and record at the common Vulkan boundary. This keeps native Vulkan, DXVK, and vkd3d-proton capture on the same recording format and replay path.
 
 
+## Build on CachyOS / Arch Linux
+
+Install a C++ toolchain and the package build dependencies, then build the staged distribution:
+
+    sudo pacman -Syu
+    sudo pacman -S --needed base-devel cmake ninja dotnet-sdk-10.0 vulkan-headers vulkan-icd-loader
+    bash scripts/package-linux.sh
+
+The SDK package provides .NET 10 for the managed CLI; Vulkan headers and the loader are used to build the layer and warmer. The graphics driver/ICD must also be installed for the user's GPU. The optional CI smoke-shader compiler is available in the `shaderc` package (`glslc`), but is not required by the packaging script itself.
+
 ## Build a local Linux package
 
-On a development machine with CMake, Ninja, .NET 10 SDK, GLSL compiler, Vulkan development headers, and the Vulkan loader installed:
+On a development machine with CMake, Ninja, .NET 10 SDK, Vulkan development headers, and the Vulkan loader installed:
 
     bash scripts/package-linux.sh
 
