@@ -27,8 +27,30 @@ fi
 
 ROOT_REAL="$(realpath "$ROOT")"
 STAGE_REAL="$(realpath -m -- "$STAGE")"
-if [[ "$STAGE_REAL" == "/" || "$STAGE_REAL" == "$ROOT_REAL" || "$STAGE_REAL" == "$HOME" ]]; then
-    printf 'Refusing unsafe package staging directory: %s\n' "$STAGE_REAL" >&2
+BUILD_ROOT_REAL="$(realpath -m -- "$BUILD_ROOT")"
+HOME_REAL="$(realpath -m -- "$HOME")"
+
+UNSAFE_STAGE=0
+if [[ "$STAGE_REAL" == "/" || "$STAGE_REAL" == "$ROOT_REAL" || "$STAGE_REAL" == "$HOME_REAL" ]]; then
+    UNSAFE_STAGE=1
+fi
+
+# Never allow rm -rf of the source tree, any ancestor containing it, or a path
+# that overlaps the build directory in either direction. Stage and build roots
+# may be siblings underneath the checkout (as in CI), but must not overlap.
+case "$ROOT_REAL/" in
+    "$STAGE_REAL/"*) UNSAFE_STAGE=1 ;;
+esac
+case "$BUILD_ROOT_REAL/" in
+    "$STAGE_REAL/"*) UNSAFE_STAGE=1 ;;
+esac
+case "$STAGE_REAL/" in
+    "$BUILD_ROOT_REAL/"*) UNSAFE_STAGE=1 ;;
+esac
+
+if [[ "$UNSAFE_STAGE" == "1" ]]; then
+    printf 'Refusing unsafe package staging directory: %s (build root: %s)\n' \
+        "$STAGE_REAL" "$BUILD_ROOT_REAL" >&2
     exit 2
 fi
 
