@@ -72,9 +72,44 @@ DESKTOP_TARGET="$APPLICATIONS_DIR/scskiller-kde.desktop"
 HAS_KDE_UI=0
 if [[ -x "$SOURCE/bin/scskiller-kde" && -f "$SOURCE_DESKTOP" ]]; then
     HAS_KDE_UI=1
+    if [[ -L "$DESKTOP_TARGET" ]]; then
+        printf 'Refusing to write through a symlinked desktop entry: %s\n' "$DESKTOP_TARGET" >&2
+        exit 2
+    fi
     if [[ -e "$DESKTOP_TARGET" ]]; then
         if [[ ! -f "$DESKTOP_TARGET" ]] ||
-           ! grep -q '^Name=SCSKiller$' "$DESKTOP_TARGET" ||
+           ! grep -q '^Name=SCSKiller
+mkdir -p -- "$DEST" "$BIN_DIR"
+cp -a -- "$SOURCE/." "$DEST/"
+ln -sfn -- "$DEST/bin/scskiller-linux" "$CLI_LINK"
+
+if [[ "$HAS_KDE_UI" == "1" ]]; then
+    mkdir -p -- "$APPLICATIONS_DIR"
+    python3 - "$DEST/share/applications/scskiller-kde.desktop" \
+        "$DESKTOP_TARGET" "$DEST/bin/scskiller-kde" <<'PY'
+import pathlib
+import sys
+
+source, target, executable = map(pathlib.Path, sys.argv[1:])
+desktop = source.read_text(encoding="utf-8")
+escaped = str(executable).replace("\\", "\\\\").replace('"', '\\"')
+lines = desktop.splitlines()
+for i, line in enumerate(lines):
+    if line == "Exec=scskiller-kde":
+        lines[i] = f'Exec="{escaped}"'
+target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
+    fi
+    printf 'Installed KDE launcher: %s\n' "$DESKTOP_TARGET"
+fi
+
+printf 'Installed SCSKiller to: %s\n' "$DEST"
+printf 'CLI symlink: %s\n' "$CLI_LINK"
+printf 'Run: %s help\n' "$CLI_LINK"
+printf 'The package requires a working Vulkan loader and GPU driver/ICD.\n'
+ "$DESKTOP_TARGET" ||
            ! grep -q 'scskiller-kde' "$DESKTOP_TARGET"; then
             printf 'Refusing to replace an unrelated desktop entry: %s\n' "$DESKTOP_TARGET" >&2
             exit 2
