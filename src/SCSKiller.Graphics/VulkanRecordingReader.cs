@@ -152,6 +152,25 @@ public static class VulkanRecordingReader
                         }
                         break;
                     }
+                    case "ray_tracing_pipeline_create":
+                    {
+                        var count = GetInt64(root, "count");
+                        if (count is null || count < 0 || count > 100_000)
+                            throw new InvalidDataException(
+                                $"Ray-tracing pipeline event at line {lineNumber} has an invalid count.");
+
+                        var sequence = GetInt64(root, "sequence") ?? 0;
+                        for (var index = 0; index < count.Value; index++)
+                        {
+                            capturedPipelines.Add(new CapturedPipeline(
+                                eventName,
+                                sequence,
+                                index,
+                                "ray-tracing",
+                                root.Clone()));
+                        }
+                        break;
+                    }
                     case "physical_device_identity":
                     {
                         var name = GetString(root, "device_name") ?? "Unknown Vulkan device";
@@ -230,51 +249,58 @@ public static class VulkanRecordingReader
             var isDynamicRendering = GetObjectProperty(state, "dynamic_rendering") is not null;
             var incompatibilityReasons = new SortedSet<string>(StringComparer.Ordinal);
 
-            if (layoutHash is null)
-                incompatibilityReasons.Add("missing-pipeline-layout-hash");
-            else if (!IsPipelineLayoutCompatible(layoutHash, pipelineLayouts, descriptorLayouts))
-                incompatibilityReasons.Add("incompatible-pipeline-layout");
-
-            if (pipelineMissingHashes.Count > 0)
-                incompatibilityReasons.Add("missing-shader-code");
-
-            if (!GetBoolean(state, "replay_compatible", true))
-                incompatibilityReasons.Add("unsupported-pipeline-state");
-
-            if (captured.Kind == "graphics")
+            if (captured.Kind == "ray-tracing")
             {
-                if (HasUnsupportedPNext(state))
-                    incompatibilityReasons.Add("unsupported-pipeline-pnext");
-
-                if (GetBoolean(state, "base_pipeline_handle_present", false) ||
-                    (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
-                    incompatibilityReasons.Add("pipeline-derivative-requires-creation-batch");
-
-                if (!isDynamicRendering)
-                {
-                    if (!GetBoolean(state, "legacy_render_pass", true))
-                        incompatibilityReasons.Add("unsupported-render-pass-mode");
-
-                    if (renderPassHash is null ||
-                        !renderPasses.TryGetValue(renderPassHash, out var renderPass) ||
-                        !GetBoolean(renderPass, "replay_compatible", false))
-                    {
-                        incompatibilityReasons.Add("missing-or-unsupported-render-pass");
-                    }
-                }
+                incompatibilityReasons.Add("ray-tracing-pipeline-state-not-captured");
             }
             else
             {
-                if (GetBoolean(state, "stage_pnext_present", false))
-                    incompatibilityReasons.Add("unsupported-shader-stage-pnext");
+                if (layoutHash is null)
+                    incompatibilityReasons.Add("missing-pipeline-layout-hash");
+                else if (!IsPipelineLayoutCompatible(layoutHash, pipelineLayouts, descriptorLayouts))
+                    incompatibilityReasons.Add("incompatible-pipeline-layout");
 
-                if (GetBoolean(state, "pipeline_pnext_present", false) &&
-                    !GetBoolean(state, "pipeline_pnext_compatible", false))
-                    incompatibilityReasons.Add("unsupported-pipeline-pnext");
+                if (pipelineMissingHashes.Count > 0)
+                    incompatibilityReasons.Add("missing-shader-code");
 
-                if (GetBoolean(state, "base_pipeline_handle_present", false) ||
-                    (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
-                    incompatibilityReasons.Add("compute-pipeline-derivative-requires-base-pipeline");
+                if (!GetBoolean(state, "replay_compatible", true))
+                    incompatibilityReasons.Add("unsupported-pipeline-state");
+
+                if (captured.Kind == "graphics")
+                {
+                    if (HasUnsupportedPNext(state))
+                        incompatibilityReasons.Add("unsupported-pipeline-pnext");
+
+                    if (GetBoolean(state, "base_pipeline_handle_present", false) ||
+                        (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
+                        incompatibilityReasons.Add("pipeline-derivative-requires-creation-batch");
+
+                    if (!isDynamicRendering)
+                    {
+                        if (!GetBoolean(state, "legacy_render_pass", true))
+                            incompatibilityReasons.Add("unsupported-render-pass-mode");
+
+                        if (renderPassHash is null ||
+                            !renderPasses.TryGetValue(renderPassHash, out var renderPass) ||
+                            !GetBoolean(renderPass, "replay_compatible", false))
+                        {
+                            incompatibilityReasons.Add("missing-or-unsupported-render-pass");
+                        }
+                    }
+                }
+                else
+                {
+                    if (GetBoolean(state, "stage_pnext_present", false))
+                        incompatibilityReasons.Add("unsupported-shader-stage-pnext");
+
+                    if (GetBoolean(state, "pipeline_pnext_present", false) &&
+                        !GetBoolean(state, "pipeline_pnext_compatible", false))
+                        incompatibilityReasons.Add("unsupported-pipeline-pnext");
+
+                    if (GetBoolean(state, "base_pipeline_handle_present", false) ||
+                        (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
+                        incompatibilityReasons.Add("compute-pipeline-derivative-requires-base-pipeline");
+                }
             }
 
             var compatible = incompatibilityReasons.Count == 0;
@@ -289,8 +315,11 @@ public static class VulkanRecordingReader
                 renderPasses);
 
             var rawPipelineState = state.GetRawText();
+            var pipelineIdentity = captured.Kind == "ray-tracing"
+                ? $"{rawPipelineState}|ray-tracing-index:{captured.IndexInEvent}"
+                : rawPipelineState;
             var pipelineId = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(rawPipelineState)))
+                SHA256.HashData(Encoding.UTF8.GetBytes(pipelineIdentity)))
                 .ToLowerInvariant()[..16];
 
             var backendMetadata = new Dictionary<string, string>(StringComparer.Ordinal)
