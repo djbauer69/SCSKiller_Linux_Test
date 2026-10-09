@@ -8,6 +8,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
     Console.WriteLine("  path <vulkan|d3d12|d3d11|d3d10|d3d9|d3d8>  Show the Linux graphics path");
     Console.WriteLine("  runtime                                      Show detected Proton/Vulkan environment");
     Console.WriteLine("  inspect-vulkan <capture.jsonl>              Summarize a Vulkan recording without replaying it");
+    Console.WriteLine("  plan-vulkan <capture.jsonl>                 Classify pipelines by replay compatibility and show skip reasons");
     Console.WriteLine("  record-info                                  Show Vulkan recorder environment");
     Console.WriteLine("  warm-proton <proton> <prefix> <workdir> <game-exe> [warmer.exe] [--threads N]  Run the existing warmer under Proton");
     Console.WriteLine("  record-vulkan <executable> <workdir> <layer-dir> <capture.jsonl> [args...]  Record a native Vulkan process");
@@ -202,6 +203,10 @@ switch (args[0])
         Environment.ExitCode = InspectVulkanRecording(args[1]);
         break;
 
+    case "plan-vulkan" when args.Length == 2:
+        Environment.ExitCode = PlanVulkanRecording(args[1]);
+        break;
+
     case "record-info":
         Console.WriteLine("SCSKILLER_VK_RECORD=1");
         Console.WriteLine("SCSKILLER_VK_RECORD_FILE=/path/to/record.jsonl");
@@ -213,6 +218,53 @@ switch (args[0])
         Environment.ExitCode = 2;
         break;
 }
+static int PlanVulkanRecording(string path)
+{
+    VulkanPipelinePlan plan;
+    try
+    {
+        plan = new VulkanCapturePlanner().PlanCapture(path);
+    }
+    catch (Exception exception) when (
+        exception is IOException or InvalidDataException or ArgumentException)
+    {
+        Console.Error.WriteLine($"Could not plan Vulkan recording: {exception.Message}");
+        return 2;
+    }
+
+    var all = plan.Recording.Pipelines;
+    var replayableCompute = CountKind(plan.ReplayablePipelines, "compute");
+    var replayableGraphics = CountKind(plan.ReplayablePipelines, "graphics");
+    var unsupportedCompute = CountKind(plan.UnsupportedPipelines, "compute");
+    var unsupportedGraphics = CountKind(plan.UnsupportedPipelines, "graphics");
+
+    Console.WriteLine($"Recording: {plan.Recording.RecordingPath}");
+    Console.WriteLine($"Pipeline plan: {all.Count} total; {plan.ReplayablePipelines.Count} replayable; {plan.UnsupportedPipelines.Count} unsupported");
+    Console.WriteLine($"Replayable: compute {replayableCompute}, graphics {replayableGraphics}");
+    Console.WriteLine($"Unsupported: compute {unsupportedCompute}, graphics {unsupportedGraphics}");
+
+    if (plan.UnsupportedReasonCounts.Count == 0)
+    {
+        Console.WriteLine("Unsupported reasons: none");
+    }
+    else
+    {
+        Console.WriteLine("Unsupported reasons:");
+        foreach (var reason in plan.UnsupportedReasonCounts)
+            Console.WriteLine($"  {reason.Key}: {reason.Value}");
+    }
+
+    return 0;
+
+    static int CountKind(
+        IReadOnlyList<PipelineDescription> pipelines,
+        string kind) =>
+        pipelines.Count(pipeline =>
+            pipeline.BackendMetadata is { } metadata &&
+            metadata.TryGetValue("pipeline_kind", out var value) &&
+            string.Equals(value, kind, StringComparison.Ordinal));
+}
+
 static int InspectVulkanRecording(string path)
 {
     VulkanRecordingReadResult recording;
