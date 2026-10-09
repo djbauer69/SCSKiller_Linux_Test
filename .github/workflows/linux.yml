@@ -169,6 +169,17 @@ jobs:
             > build/vulkan-smoke/incompatible-layout-replay.log 2>&1
           cat build/vulkan-smoke/incompatible-layout-replay.log
           grep -q 'Compute replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/incompatible-layout-replay.log
+      - name: Require complete replay through managed Vulkan warmer
+        run: |
+          if timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            warm-vulkan build/vulkan-smoke/incompatible-layout-capture.jsonl \
+            --warmer build/vulkan-warmer/scskiller-vulkan-warmer \
+            --require-complete > build/vulkan-smoke/strict-replay.log 2>&1; then
+            echo "Strict replay unexpectedly accepted skipped pipelines" >&2
+            exit 1
+          fi
+          cat build/vulkan-smoke/strict-replay.log
+          grep -q 'Incomplete Vulkan replay:' build/vulkan-smoke/strict-replay.log
       - name: Replay driver cache through Vulkan layer
         env:
           VK_LAYER_PATH: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d
