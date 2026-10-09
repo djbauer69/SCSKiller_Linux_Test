@@ -165,6 +165,36 @@ jobs:
           grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/dynamic-graphics-plan.log
           grep -Eq 'graphics id=[0-9a-f]{16} status=replayable' build/vulkan-smoke/dynamic-graphics-plan.log
 
+      - name: Skip dynamic-rendering pipelines with nested unsupported pNext state
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/dynamic-graphics-capture.jsonl")
+          target = Path("build/vulkan-smoke/dynamic-pnext-capture.jsonl")
+          changed = False
+          output = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              if not changed and record.get("event") == "graphics_pipeline_state":
+                  record["pipelines"][0]["dynamic_rendering"]["pnext_present"] = True
+                  changed = True
+              output.append(json.dumps(record, separators=(",", ":")))
+          if not changed:
+              raise SystemExit("No graphics_pipeline_state event found")
+          target.write_text("\n".join(output) + "\n")
+          PY
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/dynamic-pnext-capture.jsonl \
+            - \
+            build/vulkan-smoke/dynamic-pnext-warmed.cache.bin \
+            > build/vulkan-smoke/dynamic-pnext-replay.log 2>&1
+          grep -q 'Graphics replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/dynamic-pnext-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/dynamic-pnext-capture.jsonl > build/vulkan-smoke/dynamic-pnext-plan.log
+          grep -q 'Pipeline plan: 1 total; 0 replayable; 1 unsupported' build/vulkan-smoke/dynamic-pnext-plan.log
+          grep -Eq 'graphics id=[0-9a-f]{16} status=unsupported.*reasons=unsupported-pipeline-pnext' build/vulkan-smoke/dynamic-pnext-plan.log
+
       - name: Inspect captured Vulkan recording via the managed CLI
         run: |
           dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
