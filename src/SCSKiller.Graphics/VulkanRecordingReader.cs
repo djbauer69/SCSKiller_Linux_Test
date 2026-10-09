@@ -49,6 +49,8 @@ public static class VulkanRecordingReader
         var pipelineLayouts = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
         var renderPasses = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
         var capturedPipelines = new List<CapturedPipeline>();
+        var rayTracingFallbackEvents = new List<(long ProcessId, long Sequence, int Count, JsonElement State)>();
+        var rayTracingDetailedEvents = new HashSet<(long ProcessId, long Sequence)>();
         var eventCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var missingShaderHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         VulkanCapturedDevice? device = null;
@@ -159,15 +161,34 @@ public static class VulkanRecordingReader
                             throw new InvalidDataException(
                                 $"Ray-tracing pipeline event at line {lineNumber} has an invalid count.");
 
+                        rayTracingFallbackEvents.Add((
+                            GetInt64(root, "process_id") ?? -1,
+                            GetInt64(root, "sequence") ?? 0,
+                            (int)count.Value,
+                            root.Clone()));
+                        break;
+                    }
+                    case "ray_tracing_pipeline_state":
+                    {
+                        if (!root.TryGetProperty("pipelines", out var pipelines) ||
+                            pipelines.ValueKind != JsonValueKind.Array)
+                        {
+                            throw new InvalidDataException(
+                                $"ray_tracing_pipeline_state event at line {lineNumber} is missing its pipelines array.");
+                        }
+
+                        var processId = GetInt64(root, "process_id") ?? -1;
                         var sequence = GetInt64(root, "sequence") ?? 0;
-                        for (var index = 0; index < count.Value; index++)
+                        rayTracingDetailedEvents.Add((processId, sequence));
+                        var indexInEvent = 0;
+                        foreach (var pipeline in pipelines.EnumerateArray())
                         {
                             capturedPipelines.Add(new CapturedPipeline(
                                 eventName,
                                 sequence,
-                                index,
+                                indexInEvent++,
                                 "ray-tracing",
-                                root.Clone()));
+                                pipeline.Clone()));
                         }
                         break;
                     }
@@ -192,6 +213,25 @@ public static class VulkanRecordingReader
                         cacheReplaySkips += ReadCount(root);
                         break;
                 }
+            }
+        }
+
+        // New captures write both the legacy count event and a detailed state
+        // event with the same process/sequence pair. Use details when present;
+        // retain count-only compatibility for older recordings.
+        foreach (var fallback in rayTracingFallbackEvents)
+        {
+            if (rayTracingDetailedEvents.Contains((fallback.ProcessId, fallback.Sequence)))
+                continue;
+
+            for (var index = 0; index < fallback.Count; index++)
+            {
+                capturedPipelines.Add(new CapturedPipeline(
+                    "ray_tracing_pipeline_create",
+                    fallback.Sequence,
+                    index,
+                    "ray-tracing",
+                    fallback.State));
             }
         }
 
@@ -251,7 +291,9 @@ public static class VulkanRecordingReader
 
             if (captured.Kind == "ray-tracing")
             {
-                incompatibilityReasons.Add("ray-tracing-pipeline-state-not-captured");
+                incompatibilityReasons.Add("ray-tracing-pipeline-replay-not-implemented");
+                if (pipelineMissingHashes.Count > 0)
+                    incompatibilityReasons.Add("missing-shader-code");
             }
             else
             {
