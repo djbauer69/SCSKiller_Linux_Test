@@ -150,9 +150,11 @@ public static class VulkanRecordingReader
                         break;
                     }
                     case "pipeline_cache_replay":
+                    case "pipeline_cache_merge":
                         cacheReplays += ReadCount(root);
                         break;
                     case "pipeline_cache_replay_skipped":
+                    case "pipeline_cache_merge_skipped":
                         cacheReplaySkips += ReadCount(root);
                         break;
                 }
