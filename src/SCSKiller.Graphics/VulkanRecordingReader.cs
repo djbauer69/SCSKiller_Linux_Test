@@ -246,7 +246,8 @@ public static class VulkanRecordingReader
                 if (HasUnsupportedPNext(state))
                     incompatibilityReasons.Add("unsupported-pipeline-pnext");
 
-                if ((GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
+                if (GetBoolean(state, "base_pipeline_handle_present", false) ||
+                    (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
                     incompatibilityReasons.Add("pipeline-derivative-requires-creation-batch");
 
                 if (!isDynamicRendering)
@@ -270,6 +271,10 @@ public static class VulkanRecordingReader
                 if (GetBoolean(state, "pipeline_pnext_present", false) &&
                     !GetBoolean(state, "pipeline_pnext_compatible", false))
                     incompatibilityReasons.Add("unsupported-pipeline-pnext");
+
+                if (GetBoolean(state, "base_pipeline_handle_present", false) ||
+                    (GetInt64(state, "base_pipeline_index") ?? -1) >= 0)
+                    incompatibilityReasons.Add("compute-pipeline-derivative-requires-base-pipeline");
             }
 
             var compatible = incompatibilityReasons.Count == 0;
