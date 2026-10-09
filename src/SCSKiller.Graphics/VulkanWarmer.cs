@@ -85,7 +85,7 @@ public static class VulkanWarmer
     {
         var foundSummary = false;
 
-        foreach (var rawLine in output.Split(new[] { '\\r', '\\n' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawLine in output.Split((char)10, StringSplitOptions.RemoveEmptyEntries))
         {
             var line = rawLine.Trim();
             if (line.StartsWith("Compute replay: requested ", StringComparison.Ordinal) ||
