@@ -179,6 +179,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // The ray-tracing extension is deliberately not enabled in this probe.
+    // vkGetDeviceProcAddr must not expose its entry point in that state.
+    if (vkGetDeviceProcAddr(device, "vkCreateRayTracingPipelinesKHR") != nullptr)
+    {
+        std::cerr << "Ray-tracing entry point was exposed without enabling its extension\n";
+        vkDestroyDevice(device, nullptr);
+        vkDestroyInstance(instance, nullptr);
+        return 1;
+    }
+
     VkDescriptorSetLayoutCreateInfo descriptorInfo{
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         nullptr,
