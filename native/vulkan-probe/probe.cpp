@@ -26,14 +26,18 @@ int main(int argc, char** argv)
         std::string(argv[1]) == "--dynamic-graphics";
     const bool deviceGroupMode = argc >= 2 &&
         std::string(argv[1]) == "--device-groups";
-    if ((!graphicsMode && !deviceGroupMode && argc > 2) ||
+    const bool specializationMode = argc >= 2 &&
+        std::string(argv[1]) == "--specialization";
+    if ((!graphicsMode && !deviceGroupMode && !specializationMode && argc > 2) ||
         (graphicsMode && argc != 4) ||
-        (deviceGroupMode && argc != 2))
+        (deviceGroupMode && argc != 2) ||
+        (specializationMode && argc != 3))
     {
         std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
                   << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n"
                   << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n"
-                  << "       scskiller-vulkan-probe --device-groups\n";
+                  << "       scskiller-vulkan-probe --device-groups\n"
+                  << "       scskiller-vulkan-probe --specialization compute.spv\n";
         return 1;
     }
 
@@ -614,12 +618,13 @@ int main(int argc, char** argv)
         vkDestroyShaderModule(device, vertexShader, nullptr);
     }
 
-    if (argc == 2 && !graphicsMode && !deviceGroupMode)
+    if (specializationMode || (argc == 2 && !graphicsMode && !deviceGroupMode))
     {
-        std::ifstream shaderFile(argv[1], std::ios::binary | std::ios::ate);
+        const char* computeShaderPath = specializationMode ? argv[2] : argv[1];
+        std::ifstream shaderFile(computeShaderPath, std::ios::binary | std::ios::ate);
         if (!shaderFile)
         {
-            std::cerr << "Could not open compute shader: " << argv[1] << "\n";
+            std::cerr << "Could not open compute shader: " << computeShaderPath << "\n";
             vkDestroyPipelineCache(device, pipelineCache, nullptr);
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
@@ -672,6 +677,19 @@ int main(int argc, char** argv)
             return 1;
         }
 
+        uint32_t specializationValue = 7;
+        VkSpecializationMapEntry specializationEntry{
+            0,
+            0,
+            sizeof(specializationValue)
+        };
+        VkSpecializationInfo specializationInfo{
+            1,
+            &specializationEntry,
+            sizeof(specializationValue),
+            &specializationValue
+        };
+
         VkPipelineShaderStageCreateInfo stageInfo{
             VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             nullptr,
@@ -679,7 +697,7 @@ int main(int argc, char** argv)
             VK_SHADER_STAGE_COMPUTE_BIT,
             shaderModule,
             "main",
-            nullptr
+            specializationMode ? &specializationInfo : nullptr
         };
         VkComputePipelineCreateInfo computeInfo{
             VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -704,7 +722,9 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        std::cout << "Compute pipeline hook exercised successfully\n";
+        std::cout << (specializationMode
+            ? "Compute pipeline with specialization constants exercised successfully\n"
+            : "Compute pipeline hook exercised successfully\n");
         vkDestroyPipeline(device, pipeline, nullptr);
         vkDestroyShaderModule(device, shaderModule, nullptr);
     }
