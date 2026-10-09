@@ -281,6 +281,41 @@ jobs:
             plan-vulkan build/vulkan-smoke/capture.jsonl > build/vulkan-smoke/compute-plan.log
           grep -q 'Pipeline plan: 1 total; 1 replayable; 0 unsupported' build/vulkan-smoke/compute-plan.log
           grep -Eq 'compute id=[0-9a-f]{16} status=replayable' build/vulkan-smoke/compute-plan.log
+      - name: Report ray-tracing pipelines explicitly as unsupported
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/capture.jsonl")
+          target = Path("build/vulkan-smoke/ray-tracing-capture.jsonl")
+          events = source.read_text().splitlines()
+          events.append(json.dumps({
+              "schema": 1,
+              "event": "ray_tracing_pipeline_create",
+              "sequence": 777,
+              "count": 2
+          }, separators=(",", ":")))
+          target.write_text("\n".join(events) + "\n")
+          PY
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl > build/vulkan-smoke/ray-tracing-inspect.log
+          grep -q 'Ray-tracing pipelines: 2 (not replayable yet: 2)' build/vulkan-smoke/ray-tracing-inspect.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl > build/vulkan-smoke/ray-tracing-plan.log
+          grep -q 'Pipeline plan: 3 total; 1 replayable; 2 unsupported' build/vulkan-smoke/ray-tracing-plan.log
+          grep -q 'Unsupported: compute 0, graphics 0, ray-tracing 2' build/vulkan-smoke/ray-tracing-plan.log
+          grep -q 'ray-tracing-pipeline-state-not-captured: 2' build/vulkan-smoke/ray-tracing-plan.log
+          grep -Eq 'ray-tracing id=[0-9a-f]{16} status=unsupported.*reasons=ray-tracing-pipeline-state-not-captured' build/vulkan-smoke/ray-tracing-plan.log
+          if timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            warm-vulkan build/vulkan-smoke/ray-tracing-capture.jsonl \
+            --warmer build/vulkan-warmer/scskiller-vulkan-warmer \
+            --require-complete > build/vulkan-smoke/ray-tracing-strict.log 2>&1; then
+            echo "Strict replay unexpectedly accepted unsupported ray-tracing pipelines" >&2
+            exit 1
+          fi
+          grep -q 'ray-tracing pipelines skipped: 2' build/vulkan-smoke/ray-tracing-strict.log
+          grep -q 'Incomplete Vulkan replay:' build/vulkan-smoke/ray-tracing-strict.log
+
       - name: Replay captured compute pipeline with Vulkan warmer
         run: |
           timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
