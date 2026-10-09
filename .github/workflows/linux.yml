@@ -397,10 +397,36 @@ jobs:
           STAGE: ${{ github.workspace }}/build/package-smoke
           BUILD_ROOT: ${{ github.workspace }}/build/package-native
         run: |
-          if STAGE="${GITHUB_WORKSPACE}" BUILD_ROOT="${GITHUB_WORKSPACE}/build/package-guard" bash scripts/package-linux.sh; then
-            echo "Packaging unexpectedly accepted the repository root as STAGE" >&2
-            exit 1
-          fi
+          guard_bin="${GITHUB_WORKSPACE}/build/package-guard-bin"
+          mkdir -p "$guard_bin"
+          cat > "$guard_bin/rm" <<'EOF'
+          #!/usr/bin/env bash
+          printf '%s\\n' "$*" >> "$SCSKILLER_GUARD_RM_LOG"
+          exit 97
+          EOF
+          chmod +x "$guard_bin/rm"
+          assert_stage_rejected() {
+            local stage_path="$1"
+            local build_path="$2"
+            local rm_log="${GITHUB_WORKSPACE}/build/package-guard-rm.log"
+            rm -f "$rm_log"
+            if PATH="$guard_bin:$PATH" \\
+              SCSKILLER_GUARD_RM_LOG="$rm_log" \\
+              STAGE="$stage_path" BUILD_ROOT="$build_path" \\
+              bash scripts/package-linux.sh; then
+              echo "Packaging unexpectedly accepted unsafe STAGE=$stage_path BUILD_ROOT=$build_path" >&2
+              exit 1
+            fi
+            if test -e "$rm_log"; then
+              echo "Packaging attempted rm before rejecting unsafe STAGE=$stage_path" >&2
+              cat "$rm_log" >&2
+              exit 1
+            fi
+          }
+          assert_stage_rejected "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/build/package-guard"
+          assert_stage_rejected "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE/build/package-guard"
+          assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap" "$GITHUB_WORKSPACE/build/package-guard-overlap/build"
+          assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap/output" "$GITHUB_WORKSPACE/build/package-guard-overlap"
           bash scripts/package-linux.sh
           test -x build/package-smoke/bin/scskiller-linux
           test -x build/package-smoke/libexec/cli/scskiller-linux
