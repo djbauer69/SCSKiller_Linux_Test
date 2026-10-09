@@ -75,3 +75,12 @@ Example capture command from the source checkout:
     dist/scskiller-linux/bin/scskiller-linux record-vulkan ./your-vulkan-app "$PWD" dist/scskiller-linux/share/vulkan/explicit_layer.d capture.jsonl
 
 For Proton, pass the Proton executable, compatdata path, work directory, game executable, layer manifest directory, and capture path to `record-proton`. The recorders are experimental and should first be exercised with a small test application before using them with a full game.
+
+
+## Inspecting a capture
+
+Before replaying a game capture, summarize the recorded GPU and the pipeline coverage:
+
+    scskiller-linux inspect-vulkan capture.jsonl
+
+The report lists captured SPIR-V modules, compute and graphics pipelines, dynamic-rendering pipelines, state marked incompatible, and cache replay events. It is a diagnostic count, not a guarantee that every pipeline from a full game is reconstructible; the warmer's compiled/skipped/failed totals remain the final check.
