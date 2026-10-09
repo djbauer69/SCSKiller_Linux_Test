@@ -305,6 +305,70 @@ jobs:
           grep -q 'unsupported-pipeline-pnext: 1' build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
           grep -Eq 'compute id=[0-9a-f]{16} status=unsupported.*reasons=.*unsupported-pipeline-pnext' build/vulkan-smoke/unsupported-pipeline-pnext-plan.log
 
+      - name: Skip compute derivatives with an existing base-pipeline handle
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/capture.jsonl")
+          target = Path("build/vulkan-smoke/compute-base-handle.jsonl")
+          changed = False
+          output = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              if not changed and record.get("event") == "compute_pipeline_state":
+                  pipeline = record["pipelines"][0]
+                  pipeline["base_pipeline_handle_present"] = True
+                  pipeline["base_pipeline_index"] = -1
+                  pipeline["replay_compatible"] = False
+                  changed = True
+              output.append(json.dumps(record, separators=(",", ":")))
+          if not changed:
+              raise SystemExit("No compute_pipeline_state event found")
+          target.write_text("\n".join(output) + "\n")
+          PY
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/compute-base-handle.jsonl - \
+            build/vulkan-smoke/compute-base-handle.cache.bin \
+            > build/vulkan-smoke/compute-base-handle-replay.log 2>&1
+          grep -q 'Compute replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/compute-base-handle-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/compute-base-handle.jsonl > build/vulkan-smoke/compute-base-handle-plan.log
+          grep -q 'compute-pipeline-derivative-requires-base-pipeline: 1' build/vulkan-smoke/compute-base-handle-plan.log
+          grep -Eq 'compute id=[0-9a-f]{16} status=unsupported.*reasons=.*compute-pipeline-derivative-requires-base-pipeline' build/vulkan-smoke/compute-base-handle-plan.log
+
+      - name: Skip graphics derivatives with an existing base-pipeline handle
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = Path("build/vulkan-smoke/graphics-capture.jsonl")
+          target = Path("build/vulkan-smoke/graphics-base-handle.jsonl")
+          changed = False
+          output = []
+          for line in source.read_text().splitlines():
+              record = json.loads(line)
+              if not changed and record.get("event") == "graphics_pipeline_state":
+                  pipeline = record["pipelines"][0]
+                  pipeline["base_pipeline_handle_present"] = True
+                  pipeline["base_pipeline_index"] = -1
+                  pipeline["replay_compatible"] = False
+                  changed = True
+              output.append(json.dumps(record, separators=(",", ":")))
+          if not changed:
+              raise SystemExit("No graphics_pipeline_state event found")
+          target.write_text("\n".join(output) + "\n")
+          PY
+          timeout 60s build/vulkan-warmer/scskiller-vulkan-warmer \
+            build/vulkan-smoke/graphics-base-handle.jsonl - \
+            build/vulkan-smoke/graphics-base-handle.cache.bin \
+            > build/vulkan-smoke/graphics-base-handle-replay.log 2>&1
+          grep -q 'Graphics replay: requested 1, compiled 0, skipped 1, failed 0' build/vulkan-smoke/graphics-base-handle-replay.log
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            plan-vulkan build/vulkan-smoke/graphics-base-handle.jsonl > build/vulkan-smoke/graphics-base-handle-plan.log
+          grep -q 'pipeline-derivative-requires-creation-batch: 1' build/vulkan-smoke/graphics-base-handle-plan.log
+          grep -Eq 'graphics id=[0-9a-f]{16} status=unsupported.*reasons=.*pipeline-derivative-requires-creation-batch' build/vulkan-smoke/graphics-base-handle-plan.log
+
       - name: Skip pipelines when a recorded descriptor layout is incompatible
         run: |
           python3 - <<'PY'
