@@ -278,12 +278,54 @@ int main(int argc, char** argv)
     }
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+
+    // Optional: emulate a game that creates its cache from its own persisted
+    // data. When SCSKILLER_VK_REPLAY_CACHE is also set, the layer must preserve
+    // this initial cache and merge the warmed cache into it.
+    std::vector<uint8_t> applicationCacheData;
+    if (const char* applicationCachePath = std::getenv("SCSKILLER_PROBE_APP_CACHE"))
+    {
+        std::ifstream cacheFile(applicationCachePath, std::ios::binary | std::ios::ate);
+        if (!cacheFile)
+        {
+            std::cerr << "Could not read probe application cache: " << applicationCachePath << "\\n";
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        const auto byteCount = cacheFile.tellg();
+        if (byteCount <= 0)
+        {
+            std::cerr << "Probe application cache is empty\\n";
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        applicationCacheData.resize(static_cast<size_t>(byteCount));
+        cacheFile.seekg(0, std::ios::beg);
+        if (!cacheFile.read(reinterpret_cast<char*>(applicationCacheData.data()), byteCount))
+        {
+            std::cerr << "Could not read all bytes from probe application cache\\n";
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+            vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+            vkDestroyDevice(device, nullptr);
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+    }
+
     VkPipelineCacheCreateInfo cacheInfo{
         VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
         nullptr,
         0,
-        0,
-        nullptr
+        applicationCacheData.size(),
+        applicationCacheData.empty() ? nullptr : applicationCacheData.data()
     };
     if (!Check(vkCreatePipelineCache(device, &cacheInfo, nullptr, &pipelineCache),
                "vkCreatePipelineCache"))
