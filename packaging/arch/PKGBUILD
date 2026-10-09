@@ -1,0 +1,69 @@
+# Maintainer: SCSKiller Linux port contributors
+pkgname=scskiller-linux-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Experimental Vulkan pipeline capture and preparation tool with KDE Kirigami UI'
+arch=('x86_64')
+url='https://github.com/djbauer69/SCSKiller_Linux_Test'
+license=('GPL-3.0-or-later')
+depends=(
+  'gcc-libs'
+  'glibc'
+  'icu'
+  'openssl'
+  'vulkan-icd-loader'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-shadertools'
+  'kirigami'
+)
+makedepends=(
+  'cmake'
+  'ninja'
+  'dotnet-sdk-10.0'
+  'vulkan-headers'
+  'git'
+)
+provides=('scskiller-linux')
+conflicts=('scskiller-linux')
+source=("$pkgname::git+https://github.com/djbauer69/SCSKiller_Linux_Test.git#branch=linux-vulkan-proton")
+sha256sums=('SKIP')
+options=('!strip')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  printf 'r%s.%s\n' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  STAGE="$srcdir/scskiller-package-root" \
+    BUILD_ROOT="$srcdir/scskiller-package-build" \
+    BUILD_KDE_UI=1 \
+    bash scripts/package-linux.sh
+}
+
+package() {
+  local source_root="$srcdir/scskiller-package-root"
+  local install_root="$pkgdir/opt/scskiller-linux"
+
+  install -d "$install_root"
+  cp -a "$source_root/." "$install_root/"
+
+  install -d "$pkgdir/usr/bin"
+  ln -s '/opt/scskiller-linux/bin/scskiller-linux' "$pkgdir/usr/bin/scskiller-linux"
+  ln -s '/opt/scskiller-linux/bin/scskiller-kde' "$pkgdir/usr/bin/scskiller-kde"
+
+  install -d "$pkgdir/usr/share/applications"
+  sed 's|^Exec=scskiller-kde$|Exec=/opt/scskiller-linux/bin/scskiller-kde|' \
+    "$install_root/share/applications/scskiller-kde.desktop" \
+    > "$pkgdir/usr/share/applications/scskiller-kde.desktop"
+  rm -f "$install_root/share/applications/scskiller-kde.desktop"
+
+  install -Dm644 "$install_root/share/doc/scskiller-linux/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$install_root/share/doc/scskiller-linux/LICENSE-EXCEPTION.txt" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE-EXCEPTION.txt"
+  install -Dm644 "$install_root/share/doc/scskiller-linux/THIRD-PARTY-NOTICES.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.md"
+}
