@@ -25,7 +25,7 @@ Shader-module code is stored as Base64 SPIR-V so the standalone Vulkan warmer ca
 
 A physical_device_identity event records the Vulkan vendor/device IDs, driver version, API version, device name, and pipeline-cache UUID observed by the application. The warmer uses the vendor/device IDs and UUID to prefer the corresponding physical device when multiple Vulkan devices are present.
 
-Descriptor-set layouts and pipeline layouts are serialized using capture-stable hashes and their core state. Immutable sampler bindings are recorded but are currently rejected by the standalone warmer because sampler objects are not reconstructed yet.
+Descriptor-set layouts and pipeline layouts are serialized using capture-stable hashes and their core state, with explicit replay-compatibility flags. Any unrecorded pNext state marks that layout non-replayable; compatibility propagates from descriptor-set layouts to pipeline layouts so dependent pipelines are skipped rather than compiled against an approximate interface. Immutable sampler bindings are likewise rejected because sampler objects are not reconstructed yet.
 
 Legacy render passes record attachment descriptions, subpass attachment references, preserve lists, dependencies, and a replay-compatibility flag. Unsupported render-pass pNext state marks the render pass non-replayable instead of silently approximating it.
 
