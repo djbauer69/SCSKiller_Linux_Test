@@ -17,6 +17,8 @@ Current event types:
 - pipeline_cache_snapshot
 - pipeline_cache_replay
 - pipeline_cache_replay_skipped
+- pipeline_cache_merge
+- pipeline_cache_merge_skipped
 - physical_device_identity
 
 ## Replayable state
@@ -57,7 +59,7 @@ When the application calls vkGetPipelineCacheData, the layer can persist the ret
     capture.jsonl
     capture.jsonl.cache.12345.42.bin
 
-The JSONL event points at the binary snapshot. The cache remains opaque; SCSKiller does not parse or modify vendor cache internals.
+The JSONL event points at the binary snapshot. A successful empty-cache initialization is logged as pipeline_cache_replay; merging into a non-empty application cache is logged as pipeline_cache_merge. Their corresponding *_skipped events indicate an optional replay/merge was bypassed while preserving the application's normal cache-creation path. The cache remains opaque; SCSKiller does not parse or modify vendor cache internals.
 
 A later run can seed an empty VkPipelineCache by passing the snapshot to the standalone warmer, or by setting:
 
