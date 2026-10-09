@@ -427,6 +427,7 @@ jobs:
           assert_stage_rejected "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE/build/package-guard"
           assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap" "$GITHUB_WORKSPACE/build/package-guard-overlap/build"
           assert_stage_rejected "$GITHUB_WORKSPACE/build/package-guard-overlap/output" "$GITHUB_WORKSPACE/build/package-guard-overlap"
+          assert_stage_rejected "$GITHUB_WORKSPACE/build/package-safe-stage" "$GITHUB_WORKSPACE"
           bash scripts/package-linux.sh
           test -x build/package-smoke/bin/scskiller-linux
           test -x build/package-smoke/libexec/cli/scskiller-linux
