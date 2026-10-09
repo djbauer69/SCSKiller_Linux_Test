@@ -174,7 +174,18 @@ jobs:
           NODEVICE_SELECT: "1"
           SCSKILLER_VK_DEBUG: "1"
           VK_LOADER_DEBUG: "all"
-        run: |      - name: Stage and smoke-test Linux package
+        run: |
+          echo "Managed recorder layer dir: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d"
+          timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            record-vulkan build/vulkan-probe/scskiller-vulkan-probe \
+            ${{ github.workspace }} \
+            ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d \
+            build/vulkan-smoke/managed-native-capture.jsonl \
+            build/vulkan-smoke/compute.spv
+          test -s build/vulkan-smoke/managed-native-capture.jsonl
+          cat build/vulkan-smoke/managed-native-capture.jsonl
+          grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/managed-native-capture.jsonl
+      - name: Stage and smoke-test Linux package
         env:
           STAGE: ${{ github.workspace }}/build/package-smoke
           BUILD_ROOT: ${{ github.workspace }}/build/package-native
@@ -189,13 +200,3 @@ jobs:
             --output-cache build/vulkan-smoke/package-warmed.cache.bin \
             --warmer build/package-smoke/bin/scskiller-vulkan-warmer
           test -s build/vulkan-smoke/package-warmed.cache.bin
-          echo "Managed recorder layer dir: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d"
-          timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
-            record-vulkan build/vulkan-probe/scskiller-vulkan-probe \
-            ${{ github.workspace }} \
-            ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d \
-            build/vulkan-smoke/managed-native-capture.jsonl \
-            build/vulkan-smoke/compute.spv
-          test -s build/vulkan-smoke/managed-native-capture.jsonl
-          cat build/vulkan-smoke/managed-native-capture.jsonl
-          grep -q '"event":"compute_pipeline_state"' build/vulkan-smoke/managed-native-capture.jsonl
