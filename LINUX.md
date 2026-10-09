@@ -119,4 +119,13 @@ For a Windows game launched through Proton:
     scskiller-linux warm-vulkan capture.jsonl --output-cache warmed.cache.bin --require-complete
     scskiller-linux run-proton-vulkan /path/to/proton /path/to/compatdata /path/to/game-directory game.exe "$SCSKILLER_HOME/share/vulkan/explicit_layer.d" warmed.cache.bin
 
-Replace the example executable, Proton, compatdata, and working-directory paths with those for the installed game. The warmed cache is created by the currently selected Vulkan driver and is not a portable shader archive. The layer injects it only when the app asks for an empty `VkPipelineCache`; a game-supplied non-empty cache remains untouched. If strict warming reports skipped pipelines, do not treat that cache as a complete warm-up. A real-game validation run should compare first-launch and subsequent-launch behavior and inspect the capture for unsupported state.
+Replace the example executable, Proton, compatdata, and working-directory paths with those for the installed game. The warmed cache is created by the currently selected Vulkan driver and is not a portable shader archive. If the app asks for an empty `VkPipelineCache`, the layer creates it from the warmed snapshot; if the app supplies its own non-empty cache, the layer preserves that cache and merges the validated warmed cache into it. Cache injection and merging are skipped when the physical-device cache UUID or supported create-info conditions do not match. If strict warming reports skipped pipelines, do not treat that cache as a complete warm-up. A real-game validation run should compare first-launch and subsequent-launch behavior and inspect the capture for unsupported state.
+
+
+## Install the staged package into your home directory
+
+After extracting a CI artifact or building the package locally, install it without root privileges:
+
+    bash ./install-user-package.sh ./scskiller-linux
+
+The installer copies the package to `~/.local/opt/scskiller-linux`, creates `~/.local/bin/scskiller-linux`, and, when the KDE app is present, installs a user desktop entry with an absolute executable path. Add `~/.local/bin` to PATH if your shell or desktop session does not already include it. Override `DEST`, `BIN_DIR`, and `APPLICATIONS_DIR` to select different user-local install locations.
