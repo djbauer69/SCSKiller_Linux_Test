@@ -24,11 +24,16 @@ int main(int argc, char** argv)
          std::string(argv[1]) == "--dynamic-graphics");
     const bool dynamicGraphicsMode = argc >= 2 &&
         std::string(argv[1]) == "--dynamic-graphics";
-    if ((!graphicsMode && argc > 2) || (graphicsMode && argc != 4))
+    const bool deviceGroupMode = argc >= 2 &&
+        std::string(argv[1]) == "--device-groups";
+    if ((!graphicsMode && !deviceGroupMode && argc > 2) ||
+        (graphicsMode && argc != 4) ||
+        (deviceGroupMode && argc != 2))
     {
         std::cerr << "Usage: scskiller-vulkan-probe [compute_shader.spv]\n"
                   << "       scskiller-vulkan-probe --graphics vertex.spv fragment.spv\n"
-                  << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n";
+                  << "       scskiller-vulkan-probe --dynamic-graphics vertex.spv fragment.spv\n"
+                  << "       scskiller-vulkan-probe --device-groups\n";
         return 1;
     }
 
@@ -70,26 +75,72 @@ int main(int argc, char** argv)
         return 1;
 
     uint32_t deviceCount = 0;
-    if (!Check(vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr),
-               "vkEnumeratePhysicalDevices(count)"))
+    std::vector<VkPhysicalDevice> physicalDevices;
+
+    if (deviceGroupMode)
     {
-        vkDestroyInstance(instance, nullptr);
-        return 1;
+        auto enumerateGroups = reinterpret_cast<PFN_vkEnumeratePhysicalDeviceGroups>(
+            vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDeviceGroups"));
+        if (!enumerateGroups)
+        {
+            std::cerr << "vkEnumeratePhysicalDeviceGroups is unavailable\n";
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        uint32_t groupCount = 0;
+        if (!Check(enumerateGroups(instance, &groupCount, nullptr),
+                   "vkEnumeratePhysicalDeviceGroups(count)"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        std::vector<VkPhysicalDeviceGroupProperties> groups(groupCount);
+        for (auto& group : groups)
+            group.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES;
+
+        if (groupCount > 0 &&
+            !Check(enumerateGroups(instance, &groupCount, groups.data()),
+                   "vkEnumeratePhysicalDeviceGroups"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        for (const auto& group : groups)
+        {
+            for (uint32_t i = 0; i < group.physicalDeviceCount; ++i)
+                physicalDevices.push_back(group.physicalDevices[i]);
+        }
+
+        deviceCount = static_cast<uint32_t>(physicalDevices.size());
+    }
+    else
+    {
+        if (!Check(vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr),
+                   "vkEnumeratePhysicalDevices(count)"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
+
+        physicalDevices.resize(deviceCount);
+        if (deviceCount > 0 &&
+            !Check(vkEnumeratePhysicalDevices(instance, &deviceCount, physicalDevices.data()),
+                   "vkEnumeratePhysicalDevices"))
+        {
+            vkDestroyInstance(instance, nullptr);
+            return 1;
+        }
     }
 
-    std::cout << "Physical devices: " << deviceCount << "\n";
+    std::cout << "Physical devices: " << deviceCount
+              << (deviceGroupMode ? " (from device groups)\n" : "\n");
     if (deviceCount == 0)
     {
         vkDestroyInstance(instance, nullptr);
         return 0;
-    }
-
-    std::vector<VkPhysicalDevice> physicalDevices(deviceCount);
-    if (!Check(vkEnumeratePhysicalDevices(instance, &deviceCount, physicalDevices.data()),
-               "vkEnumeratePhysicalDevices"))
-    {
-        vkDestroyInstance(instance, nullptr);
-        return 1;
     }
 
     VkPhysicalDevice physicalDevice = physicalDevices[0];
@@ -521,7 +572,7 @@ int main(int argc, char** argv)
         vkDestroyShaderModule(device, vertexShader, nullptr);
     }
 
-    if (argc == 2 && !graphicsMode)
+    if (argc == 2 && !graphicsMode && !deviceGroupMode)
     {
         std::ifstream shaderFile(argv[1], std::ios::binary | std::ios::ate);
         if (!shaderFile)
