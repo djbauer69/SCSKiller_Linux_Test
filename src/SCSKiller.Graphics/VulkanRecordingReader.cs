@@ -357,6 +357,18 @@ public static class VulkanRecordingReader
                 renderPasses);
 
             var rawPipelineState = state.GetRawText();
+            var rayTracingStageNames = captured.Kind == "ray-tracing" &&
+                state.TryGetProperty("stages", out var rayStages) &&
+                rayStages.ValueKind == JsonValueKind.Array
+                    ? string.Join(",", rayStages.EnumerateArray()
+                        .Select(stage => GetString(stage, "stage") ?? "unknown"))
+                    : string.Empty;
+            var rayTracingShaderHashes = captured.Kind == "ray-tracing" &&
+                state.TryGetProperty("stages", out rayStages) &&
+                rayStages.ValueKind == JsonValueKind.Array
+                    ? string.Join(",", rayStages.EnumerateArray()
+                        .Select(stage => NormalizeHash(GetString(stage, "module_hash")) ?? string.Empty))
+                    : string.Empty;
             var pipelineIdentity = captured.Kind == "ray-tracing"
                 ? $"{rawPipelineState}|ray-tracing-index:{captured.IndexInEvent}"
                 : rawPipelineState;
@@ -378,6 +390,26 @@ public static class VulkanRecordingReader
                 ["replay_compatible"] = compatible ? "true" : "false",
                 ["missing_shader_hashes"] = string.Join(",", pipelineMissingHashes.Order(StringComparer.OrdinalIgnoreCase)),
                 ["replay_incompatibility_reasons"] = string.Join(";", incompatibilityReasons),
+                ["ray_tracing_stage_count"] = captured.Kind == "ray-tracing"
+                    ? (GetInt64(state, "stage_count") ?? (state.TryGetProperty("stages", out var rtStages) && rtStages.ValueKind == JsonValueKind.Array ? rtStages.GetArrayLength() : 0)).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "0",
+                ["ray_tracing_stage_names"] = rayTracingStageNames,
+                ["ray_tracing_shader_hashes"] = rayTracingShaderHashes,
+                ["ray_tracing_group_count"] = captured.Kind == "ray-tracing"
+                    ? (GetInt64(state, "group_count") ?? (state.TryGetProperty("groups", out var rtGroups) && rtGroups.ValueKind == JsonValueKind.Array ? rtGroups.GetArrayLength() : 0)).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "0",
+                ["ray_tracing_recursion_depth"] = captured.Kind == "ray-tracing"
+                    ? (GetInt64(state, "max_pipeline_ray_recursion_depth") ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "0",
+                ["ray_tracing_library_count"] = captured.Kind == "ray-tracing"
+                    ? (GetInt64(state, "library_count") ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "0",
+                ["ray_tracing_pnext_types"] = captured.Kind == "ray-tracing"
+                    ? GetPropertyRaw(state, "pipeline_pnext_types") ?? "[]"
+                    : "[]",
+                ["ray_tracing_replay_reason"] = captured.Kind == "ray-tracing"
+                    ? GetString(state, "replay_incompatibility_reason") ?? "ray-tracing-pipeline-replay-not-implemented"
+                    : string.Empty,
                 ["raw_pipeline_state_json"] = rawPipelineState
             };
 
@@ -468,6 +500,32 @@ public static class VulkanRecordingReader
             CopyRawProperty(state, result, "stage");
             CopyRawProperty(state, result, "entry_point");
             CopyRawProperty(state, result, "specialization");
+            return result;
+        }
+
+        if (kind == "ray-tracing")
+        {
+            foreach (var name in new[]
+            {
+                "layout_hash",
+                "stage_count",
+                "stages",
+                "group_count",
+                "groups",
+                "max_pipeline_ray_recursion_depth",
+                "base_pipeline_index",
+                "base_pipeline_handle_present",
+                "pipeline_pnext_types",
+                "library_info_present",
+                "library_count",
+                "library_interface",
+                "dynamic_state_count",
+                "dynamic_states",
+                "replay_incompatibility_reason"
+            })
+            {
+                CopyRawProperty(state, result, name);
+            }
             return result;
         }
 
