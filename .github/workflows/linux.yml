@@ -174,7 +174,21 @@ jobs:
           NODEVICE_SELECT: "1"
           SCSKILLER_VK_DEBUG: "1"
           VK_LOADER_DEBUG: "all"
+        run: |      - name: Stage and smoke-test Linux package
+        env:
+          STAGE: ${{ github.workspace }}/build/package-smoke
+          BUILD_ROOT: ${{ github.workspace }}/build/package-native
         run: |
+          bash scripts/package-linux.sh
+          test -x build/package-smoke/bin/scskiller-linux
+          test -s build/package-smoke/lib/VK_LAYER_SCSKILLER.so
+          test -s build/package-smoke/share/vulkan/explicit_layer.d/layer.json
+          test -x build/package-smoke/bin/scskiller-vulkan-warmer
+          build/package-smoke/bin/scskiller-linux help
+          timeout 60s build/package-smoke/bin/scskiller-linux warm-vulkan build/vulkan-smoke/capture.jsonl \
+            --output-cache build/vulkan-smoke/package-warmed.cache.bin \
+            --warmer build/package-smoke/bin/scskiller-vulkan-warmer
+          test -s build/vulkan-smoke/package-warmed.cache.bin
           echo "Managed recorder layer dir: ${{ github.workspace }}/build/vulkan-install/share/vulkan/explicit_layer.d"
           timeout 60s dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
             record-vulkan build/vulkan-probe/scskiller-vulkan-probe \
