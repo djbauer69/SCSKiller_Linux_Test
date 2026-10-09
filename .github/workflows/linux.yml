@@ -183,8 +183,11 @@ jobs:
           rm -f build/vulkan-smoke/merged-app-cache.jsonl
           timeout 60s build/vulkan-probe/scskiller-vulkan-probe build/vulkan-smoke/compute.spv
           test -s build/vulkan-smoke/merged-app-cache.jsonl
-          grep -q '"event":"pipeline_cache_replay"' build/vulkan-smoke/merged-app-cache.jsonl
-          ! grep -q '"event":"pipeline_cache_replay_skipped"' build/vulkan-smoke/merged-app-cache.jsonl
+          grep -q '"event":"pipeline_cache_merge"' build/vulkan-smoke/merged-app-cache.jsonl
+          ! grep -q '"event":"pipeline_cache_merge_skipped"' build/vulkan-smoke/merged-app-cache.jsonl
+          dotnet run --project src/SCSKiller.Linux.Cli/SCSKiller.Linux.Cli.csproj -c Release -- \
+            inspect-vulkan build/vulkan-smoke/merged-app-cache.jsonl > build/vulkan-smoke/merged-app-cache-inspect.log
+          grep -q 'Driver cache injections/merges: 1; skipped: 0' build/vulkan-smoke/merged-app-cache-inspect.log
 
       - name: Skip pipelines when a recorded descriptor layout is incompatible
         run: |
