@@ -26,3 +26,20 @@ jobs:
         run: cmake -S gui/kde -B build/kde-ui -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build Kirigami app
         run: cmake --build build/kde-ui --parallel
+      - name: Smoke-load the QML application
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          timeout 8s build/kde-ui/scskiller-kde > build/kde-ui-smoke.log 2>&1
+          status=$?
+          set -e
+          cat build/kde-ui-smoke.log
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "KDE UI exited unexpectedly with status $status" >&2
+            exit 1
+          fi
+          if grep -Eiq 'module .* is not installed|type .* unavailable|referenceerror|failed to load .*qml|cannot assign to non-existent property' build/kde-ui-smoke.log; then
+            echo "QML runtime loading reported an error" >&2
+            exit 1
+          fi
