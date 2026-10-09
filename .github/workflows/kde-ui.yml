@@ -47,6 +47,17 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja dotnet-sdk-10.0 vulkan-headers vulkan-icd-loader \
             qt6-base qt6-declarative qt6-shadertools kirigami
+      - name: Validate Arch PKGBUILD metadata
+        run: |
+          useradd --create-home --user-group pkgcheck
+          mkdir -p build/pkgbuild-check
+          cp packaging/arch/PKGBUILD build/pkgbuild-check/PKGBUILD
+          chown -R pkgcheck:pkgcheck build/pkgbuild-check
+          runuser -u pkgcheck -- bash -c 'cd "$1" && makepkg --printsrcinfo > .SRCINFO' _ \
+            "$GITHUB_WORKSPACE/build/pkgbuild-check"
+          grep -q 'pkgname = scskiller-linux-git' build/pkgbuild-check/.SRCINFO
+          grep -q 'depends = vulkan-icd-loader' build/pkgbuild-check/.SRCINFO
+          grep -q 'makedepends = dotnet-sdk-10.0' build/pkgbuild-check/.SRCINFO
       - name: Configure Kirigami app
         run: cmake -S gui/kde -B build/kde-ui -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build Kirigami app
